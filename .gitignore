@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# 编译产物（顶层 build/ 为烧录用产物，按需保留；此处忽略临时构建）
+*.tmp
+*.swp
+*.log
+
+# PlatformIO 构建目录（每个工程内）
+.pio/
+*.o
+*.d
+
+# 各工程已自带 .gitignore，这里兜底
+build.ninja
+sdkconfig

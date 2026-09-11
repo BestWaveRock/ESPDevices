@@ -151,44 +151,75 @@ void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uin
     }
 }
 
-// 增量刷新: 只在内容变化时重绘对应区域, 避免每秒整屏黑闪
-static const uint16_t SEC_CLOCK_BG = LCD_BLACK;
-static const uint16_t SEC_WEATHER_BG = LCD_BLACK;
-static const uint16_t SEC_SERVICE_BG = LCD_BLACK;
+// 各分区独立行, 只在自身内容变化时清+重绘对应行, 整屏绝不再整区清 -> 无黑闪
+static const int16_t IP_Y = 6;
+static const int16_t CLOCK_BASELINE = 90;
+static const int16_t DATE_BASELINE = 122;
+static const int16_t WEATHER_BASELINE = 160;
 
-// 顶部用内置 GLCD 字体展示本机 IP (ASCII 数字/点号, size1 每字符约 6px)
+// 顶部用内置 GLCD 字体展示本机 IP (ASCII, size1 每字符约 6px)
 static void drawIp(Arduino_GFX* gfx, const char* ip) {
     if (ip == nullptr || ip[0] == '\0') return;
     int w = (int)strlen(ip) * 6;
     gfx->setTextSize(1);
     gfx->setTextColor(0x608060, LCD_BLACK);
-    gfx->setCursor((LCD_W - w) / 2, 6);
+    gfx->setCursor((LCD_W - w) / 2, IP_Y);
     gfx->print(ip);
+}
+
+// 秒级时钟: 逐数字小格子刷新, 只重绘变化的数字, 数字间有间隙互不干扰, 无整行黑闪
+static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, int16_t baseline, uint16_t color) {
+    int16_t totalW = clockWidth(s);
+    int16_t x = (LCD_W - totalW) / 2;
+    const char* p = s;
+    const char* q = prev;
+    while (*p != '\0') {
+        bool changed = (*p != *q);
+        int idx = clockFind(*p);
+        if (idx >= 0) {
+            Glyph g;
+            glyphAt(CLKMetrics, (uint16_t)idx, &g);
+            if (changed && g.w > 0 && g.h > 0) {
+                gfx->fillRect(x, baseline + g.yoff, g.adv, g.h, LCD_BLACK);
+                gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CLKBitmaps[g.off], g.w, g.h, color);
+            }
+            x += g.adv;
+        } else {
+            x += 12;
+        }
+        p++;
+        q++;
+    }
 }
 
 void render(Arduino_GFX* gfx) {
     auto clock = ClockWeather::localClock();
 
     static bool first = true;
-    static int lastH = -1, lastM = -1;
-    static int lastY = -1, lastMo = -1, lastD = -1;
     static bool lastValid = false;
+    static char lastTimeStr[16] = "";
+    static char lastDateKey[32] = "";
     static char lastWeather[32] = "";
     static char lastCity[32] = "";
     static char lastIp[16] = "";
     static int lastSvcCount = -1;
     static bool lastSvcUp[4] = {false, false, false, false};
 
+    // ---- 本机 IP ----
     char ipBuf[16];
     String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : String("No Net");
     strncpy(ipBuf, ipStr.c_str(), sizeof(ipBuf) - 1);
     ipBuf[sizeof(ipBuf) - 1] = '\0';
-    const char* ip = ipBuf;
-    bool ipChanged = first || strcmp(ip, lastIp) != 0;
+    bool ipChanged = first || strcmp(ipBuf, lastIp) != 0;
 
-    bool clockChanged = first || (!clock.valid != !lastValid) || (clock.hour != lastH) || (clock.min != lastM);
-    bool dateChanged = clockChanged && (clock.valid && (clock.year != lastY || clock.mon != lastMo || clock.day != lastD));
+    // ---- 日期行 ----
+    char dateKey[32] = "";
+    if (clock.valid) {
+        snprintf(dateKey, sizeof(dateKey), "%d-%02d-%02d-%d", clock.year, clock.mon, clock.day, clock.weekday);
+    }
+    bool dateChanged = first || (clock.valid && strcmp(dateKey, lastDateKey) != 0);
 
+    // ---- 天气行 ----
     char wlbuf[32];
     {
         const ClockWeather::Weather& w = ClockWeather::weather();
@@ -201,10 +232,10 @@ void render(Arduino_GFX* gfx) {
     const char* city = configManager.getCity();
     bool weatherChanged = first || (strcmp(wlbuf, lastWeather) != 0) || (strcmp(city, lastCity) != 0);
 
+    // ---- 服务行 ----
     int n = 0;
     const ClockWeather::ServiceStatus* svcs = ClockWeather::services(n);
-    bool svcChanged = false;
-    if (n != lastSvcCount) svcChanged = true;
+    bool svcChanged = (n != lastSvcCount);
     for (int i = 0; i < n && i < 4; i++) {
         if (svcs[i].up != lastSvcUp[i]) { svcChanged = true; break; }
     }
@@ -212,62 +243,69 @@ void render(Arduino_GFX* gfx) {
 
     if (first) {
         gfx->fillScreen(LCD_BLACK);
-        gfx->fillRect(0, 0, LCD_W, 130, SEC_CLOCK_BG);
-        gfx->fillRect(0, 130, LCD_W, 60, SEC_WEATHER_BG);
-        gfx->fillRect(0, 190, LCD_W, 50, SEC_SERVICE_BG);
     }
 
-    if (clockChanged || dateChanged || ipChanged) {
-        gfx->fillRect(0, 0, LCD_W, 130, SEC_CLOCK_BG);
-        drawIp(gfx, ip);
-        if (clock.valid) {
-            char buf[16];
-            snprintf(buf, sizeof(buf), "%02d:%02d", clock.hour, clock.min);
-            int16_t w = clockWidth(buf);
-            drawClock(gfx, buf, (LCD_W - w) / 2, 90, LCD_WHITE);
+    // IP 行 (独立)
+    if (ipChanged) {
+        gfx->fillRect(0, 0, LCD_W, 20, LCD_BLACK);
+        drawIp(gfx, ipBuf);
+    }
+
+    // 时钟行 (秒级, 逐数字)
+    if (clock.valid) {
+        char tbuf[16];
+        snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", clock.hour, clock.min, clock.sec);
+        if (first || !lastValid) {
+            gfx->fillRect(0, 48, LCD_W, 48, LCD_BLACK);  // 状态切换, 清一次
+        }
+        drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, LCD_WHITE);
+        strncpy(lastTimeStr, tbuf, sizeof(lastTimeStr) - 1);
+        lastTimeStr[sizeof(lastTimeStr) - 1] = '\0';
+    } else {
+        gfx->fillRect(0, 48, LCD_W, 48, LCD_BLACK);
+        static const char* t = "同步时间中...";
+        drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, CLOCK_BASELINE, 0x608060);
+        lastTimeStr[0] = '\0';
+    }
+
+    // 日期行 (独立, 不被时钟重绘影响)
+    if (dateChanged && clock.valid) {
+        static const char* WK[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+        char lunarbuf[16];
+        LunarCalendar::text(clock.year, clock.mon, clock.day, lunarbuf, sizeof(lunarbuf));
+        char line[64];
+        if (lunarbuf[0] != '\0') {
+            snprintf(line, sizeof(line), "%d-%02d-%02d %s %s", clock.year, clock.mon, clock.day, WK[clock.weekday], lunarbuf);
         } else {
-            static const char* t = "同步时间中...";
-            drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, 90, 0x608060);
+            snprintf(line, sizeof(line), "%d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK[clock.weekday]);
         }
+        gfx->fillRect(0, 100, LCD_W, 26, LCD_BLACK);
+        int16_t lw = utf8Width(line);
+        drawUtf8(gfx, line, (LCD_W - lw) / 2, DATE_BASELINE, 0xC0C0C0);
     }
 
-    if (dateChanged) {
-        if (clock.valid) {
-            static const char* WK[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
-            char lunarbuf[16];
-            LunarCalendar::text(clock.year, clock.mon, clock.day, lunarbuf, sizeof(lunarbuf));
-            char line[64];
-            if (lunarbuf[0] != '\0') {
-                snprintf(line, sizeof(line), "%d-%02d-%02d %s %s", clock.year, clock.mon, clock.day, WK[clock.weekday], lunarbuf);
-            } else {
-                snprintf(line, sizeof(line), "%d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK[clock.weekday]);
-            }
-            int16_t lw = utf8Width(line);
-            drawUtf8(gfx, line, (LCD_W - lw) / 2, 122, 0xC0C0C0);
-        }
-    }
-
+    // 天气行 (独立)
     if (weatherChanged) {
-        gfx->fillRect(0, 130, LCD_W, 60, SEC_WEATHER_BG);
-        int16_t yw = 160;
+        gfx->fillRect(0, 138, LCD_W, 28, LCD_BLACK);
         int16_t cw = utf8Width(city);
         int16_t ww = utf8Width(wlbuf);
         int16_t sx = (LCD_W - (cw + 10 + ww)) / 2;
-        drawUtf8(gfx, city, sx, yw, 0x90E090);
-        drawUtf8(gfx, wlbuf, sx + cw + 10, yw, LCD_WHITE);
+        drawUtf8(gfx, city, sx, WEATHER_BASELINE, 0x90E090);
+        drawUtf8(gfx, wlbuf, sx + cw + 10, WEATHER_BASELINE, LCD_WHITE);
     }
 
+    // 服务行 (独立)
     if (svcChanged) {
-        gfx->fillRect(0, 190, LCD_W, 50, SEC_SERVICE_BG);
+        gfx->fillRect(0, 195, LCD_W, LCD_H - 195, LCD_BLACK);
         for (int i = 0; i < n && i < 4; i++) {
             int col = i % 2;
             int row = i / 2;
             int16_t x = (col == 0) ? 8 : 124;
             int16_t y = 206 + row * 22;
             gfx->fillCircle(x, y - 4, 3, svcs[i].up ? LCD_GREEN : LCD_RED);
-            const char* ip = svcs[i].ip.c_str();
-            drawUtf8(gfx, ip, x + 8, y, 0xB0B0B0);
-            int16_t ipw = utf8Width(ip);
+            const char* sip = svcs[i].ip.c_str();
+            drawUtf8(gfx, sip, x + 8, y, 0xB0B0B0);
+            int16_t ipw = utf8Width(sip);
             drawUtf8(gfx, svcs[i].up ? "在线" : "离线", x + 8 + ipw + 4, y,
                      svcs[i].up ? 0x90E090 : 0xF08080);
         }
@@ -278,16 +316,15 @@ void render(Arduino_GFX* gfx) {
     }
 
     // 更新跟踪状态
-    lastH = clock.hour;
-    lastM = clock.min;
-    lastY = clock.year;
-    lastMo = clock.mon;
-    lastD = clock.day;
     lastValid = clock.valid;
+    strncpy(lastDateKey, dateKey, sizeof(lastDateKey) - 1);
+    lastDateKey[sizeof(lastDateKey) - 1] = '\0';
     strncpy(lastWeather, wlbuf, sizeof(lastWeather) - 1);
     lastWeather[sizeof(lastWeather) - 1] = '\0';
     strncpy(lastCity, city, sizeof(lastCity) - 1);
     lastCity[sizeof(lastCity) - 1] = '\0';
+    strncpy(lastIp, ipBuf, sizeof(lastIp) - 1);
+    lastIp[sizeof(lastIp) - 1] = '\0';
     lastSvcCount = n;
     for (int i = 0; i < 4; i++) lastSvcUp[i] = (i < n) ? svcs[i].up : false;
     first = false;

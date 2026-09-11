@@ -191,6 +191,7 @@ static const int16_t SVC_TOP = 172;
 static const int16_t SVC_ROW_H = 26;
 static const int16_t SVC_ADDR_W = 120;
 static const int16_t SVC_GAP = 6;
+static const int16_t SVC_ADDR_CHARS = 20;  // 地址列最多字符数(超截)
 
 // 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
 static uint16_t svcDelayColor(int ms) {
@@ -199,15 +200,15 @@ static uint16_t svcDelayColor(int ms) {
     return (uint16_t)0x4C40;
 }
 
-// 截断服务地址(超12字符截末尾10字符+..)
+// 截断服务地址(超SVC_ADDR_CHARS字符截)
 static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
     char buf[48];
     snprintf(buf, sizeof(buf), "%s:%d", ip, port);
     size_t len = strlen(buf);
-    if (len > 12) {
-        strncpy(out, buf, 10);
-        out[10] = '\0';
-        strncat(out, "..", outSz - 11);
+    if (len > SVC_ADDR_CHARS) {
+        strncpy(out, buf, SVC_ADDR_CHARS - 2);
+        out[SVC_ADDR_CHARS - 2] = '\0';
+        strncat(out, "..", outSz - (SVC_ADDR_CHARS - 2) - 1);
     } else {
         strncpy(out, buf, outSz - 1);
         out[outSz - 1] = '\0';
@@ -365,12 +366,12 @@ void render(Arduino_GFX* gfx) {
                     gfx->setCursor(x + 10, y);
                     gfx->print(lbl);
                     if (svcs[i].up) {
-                        gfx->setTextSize(2);
+                        gfx->setTextSize(1);
                         gfx->setTextColor(svcDelayColor(svcs[i].latency_ms), LCD_BLACK);
                         gfx->setCursor(x + SVC_ADDR_W + SVC_GAP, y);
                         gfx->printf("%dms", svcs[i].latency_ms);
                     } else {
-                        gfx->setTextSize(2);
+                        gfx->setTextSize(1);
                         gfx->setTextColor(0xF08080, LCD_BLACK);
                         gfx->setCursor(x + SVC_ADDR_W + SVC_GAP, y);
                         gfx->print("离线");

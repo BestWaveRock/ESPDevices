@@ -183,6 +183,55 @@ void setup() {
 
     registerApiEndpoints(webserver);
 
+    // /config 页面: 读 config.json 展示配置表单, POST 写回 LittleFS 并重启
+    if (littleFsReadyForStatic && webserver != nullptr) {
+        webserver->raw().on("/config", HTTP_GET, []() {
+            String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Config</title>"
+                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                "<style>body{font-family:sans-serif;max-width:600px;margin:2rem auto;padding:0 1rem}"
+                "label{display:block;margin:0.7rem 0 0.2rem}input,select{width:100%;padding:0.4rem}"
+                "button{background:#2563eb;color:#fff;border:none;padding:0.6rem 1.2rem;border-radius:4px;margin-top:1rem}"
+                "h1{color:#2563eb}</style></head><body>"
+                "<h1>Clock / Weather / Service Config</h1>"
+                "<form method='POST' action='/config'>"
+                "<label>Latitude (lat)</label><input name='lat' type='number' step='0.0001' value='" + String(configManager.lat) + "'>"
+                "<label>Longitude (lng)</label><input name='lng' type='number' step='0.0001' value='" + String(configManager.lng) + "'>"
+                "<label>City</label><input name='city' type='text' value='" + String(configManager.getCity()) + "'>"
+                "<label>Services (comma, ip:port)</label><input name='services' type='text' value='" + String(configManager.getServices()) + "'>"
+                "<label>Weather interval (minutes)</label><input name='weather_min' type='number' value='" + String(configManager.weather_min) + "'>"
+                "<label>Service check interval (seconds)</label><input name='service_sec' type='number' value='" + String(configManager.service_sec) + "'>"
+                "<label>Timezone offset (hours)</label><input name='tz_offset' type='number' value='" + String(configManager.tz_offset) + "'>"
+                "<button type='submit'>Save &amp; Reboot</button>"
+                "</form></body></html>";
+            webserver->raw().send(200, "text/html; charset=UTF-8", html.c_str());
+        });
+        webserver->raw().on("/config", HTTP_POST, []() {
+            String body = webserver->raw().arg("plain");
+            if (body.length() == 0) {
+                webserver->raw().send(400, "text/plain", "Empty body");
+                return;
+            }
+            JsonDocument doc;
+            DeserializationError err = deserializeJson(doc, body);
+            if (err) {
+                webserver->raw().send(400, "text/plain", "Invalid JSON");
+                return;
+            }
+            if (doc["lat"].is<float>()) configManager.lat = doc["lat"].as<float>();
+            if (doc["lng"].is<float>()) configManager.lng = doc["lng"].as<float>();
+            if (doc["city"].is<const char*>()) configManager.city = doc["city"].as<const char*>();
+            if (doc["services"].is<const char*>()) configManager.services = doc["services"].as<const char*>();
+            if (doc["weather_min"].is<int>()) configManager.weather_min = doc["weather_min"].as<int>();
+            if (doc["service_sec"].is<int>()) configManager.service_sec = doc["service_sec"].as<int>();
+            if (doc["tz_offset"].is<int>()) configManager.tz_offset = doc["tz_offset"].as<int>();
+            configManager.save();
+            webserver->raw().send(200, "text/plain", "Saved, rebooting...");
+            delay(500);
+            ESP.restart();
+        });
+        Logger::info("Registered /config page", "Global");
+    }
+
     if (!littleFsReadyForStatic) {
         httpUpdater.setup(&webserver->raw(), "/legacyupdate");
         Logger::warn("Enabled legacy OTA route because LittleFS is unavailable or empty", "Global");

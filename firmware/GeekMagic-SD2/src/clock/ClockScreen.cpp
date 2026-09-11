@@ -320,11 +320,10 @@ void render(Arduino_GFX* gfx) {
             drawUtf8(gfx, sip, x + 8, y, 0xB0B0B0);
             int16_t ipw = utf8Width(sip);
             if (svcs[i].up) {
-                char nbuf[12];
-                snprintf(nbuf, sizeof(nbuf), "%d", svcs[i].latency_ms);
-                int16_t nbw = utf8Width(nbuf);
-                drawUtf8(gfx, nbuf, x + 8 + ipw + 4, y, LCD_GREEN);
-                drawUtf8(gfx, "ms", x + 8 + ipw + 4 + nbw, y, LCD_GREEN);
+                gfx->setTextSize(1);
+                gfx->setTextColor(LCD_GREEN, LCD_BLACK);
+                gfx->setCursor(x + 8 + ipw + 4, y);
+                gfx->printf("%dms", svcs[i].latency_ms);
             } else {
                 drawUtf8(gfx, "离线", x + 8 + ipw + 4, y, 0xF08080);
             }

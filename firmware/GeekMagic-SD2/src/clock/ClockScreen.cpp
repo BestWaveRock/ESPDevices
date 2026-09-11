@@ -159,6 +159,34 @@ static const int16_t LUNAR_BASELINE = 126;  // 农历 (CJK 大字, y 为基线)
 static const int16_t WEATHER_BASELINE = 160;
 static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
+// 服务区: 从172起, 每行一个服务(左右两列), 每行高24px, 最多显示2行(4个), 超过则轮播
+static const int16_t SVC_TOP = 172;
+static const int16_t SVC_ROW_H = 26;
+static const int16_t SVC_COL_W = LCD_W / 2 - 6;
+static const int16_t SVC_PREFIX = 4;   // 地址后空4px再显示延迟
+
+// 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
+static uint16_t svcDelayColor(int ms) {
+    if (ms < 30) return (uint16_t)0x0A00;       // 绿色 (RGB565)
+    if (ms < 100) return (uint16_t)0x6540;      // 黄色 (RGB565)
+    return (uint16_t)0x4C40;                    // 橙色 (RGB565)
+}
+
+// 截断服务地址(超12字符截末尾加..)
+static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s:%d", ip, port);
+    size_t len = strlen(buf);
+    if (len > 12) {
+        strncpy(out, buf, 10);
+        out[10] = '\0';
+        strncat(out, "..", outSz - 11);
+    } else {
+        strncpy(out, buf, outSz - 1);
+        out[outSz - 1] = '\0';
+    }
+}
+
 // 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
 static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
     gfx->setTextSize(1);
@@ -304,49 +332,59 @@ void render(Arduino_GFX* gfx) {
         drawUtf8(gfx, wlbuf, sx + dw + 8, WEATHER_BASELINE, LCD_WHITE);
     }
 
-    // 服务行 (最多8个, 每页2个, 每10秒轮播切换)
+    // 服务行 (最多8个, 每行1个服务左右两列, 2行/页, 每10秒轮播)
     {
         unsigned long now = millis();
         if (svcPageTs == 0) svcPageTs = now;
         if (now - svcPageTs >= 10000UL) {
             svcPageTs = now;
-            if (n > 2) svcPage = (svcPage + 1) % ((n + 1) / 2);
+            if (n > 2) {
+                int totalPages = (n + 1) / 2;
+                svcPage = (svcPage + 1) % totalPages;
+            }
         }
         bool svcChanged = first;
         for (int i = 0; i < n && i < 8; i++) {
             if (svcs[i].up != lastSvcUp[i] || svcs[i].latency_ms != lastLatMs[i]) { svcChanged = true; break; }
         }
         if (svcChanged) {
-            gfx->fillRect(0, 195, LCD_W, LCD_H - 195, LCD_BLACK);
+            gfx->fillRect(0, SVC_TOP - 2, LCD_W, LCD_H - SVC_TOP + 2, LCD_BLACK);
             if (n == 0) {
                 static const char* t = "未配置监控服务";
-                drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, 210, 0x606060);
+                drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, SVC_TOP + 20, 0x606060);
             } else {
                 int pageStart = svcPage * 2;
-                int displayCount = (n - pageStart >= 2) ? 2 : (n - pageStart);
-                for (int j = 0; j < displayCount; j++) {
-                    int i = pageStart + j;
+                int rowsOnPage = (n - pageStart >= 2) ? 2 : (n - pageStart);
+                for (int r = 0; r < rowsOnPage; r++) {
+                    int i = pageStart + r;
                     if (i >= n || i >= 8) break;
-                    int16_t x = (j == 0) ? 8 : LCD_W / 2 + 4;
-                    int16_t y = 205;
-                    gfx->fillCircle(x, y - 4, 3, svcs[i].up ? LCD_GREEN : LCD_RED);
-                    const char* sip = svcs[i].ip.c_str();
-                    drawUtf8(gfx, sip, x + 8, y, 0xB0B0B0);
+                    int16_t col = r % 2;
+                    int16_t row = r / 2;
+                    int16_t x = col * SVC_COL_W + 4;
+                    int16_t y = SVC_TOP + row * SVC_ROW_H + 16;
+                    char lbl[16];
+                    svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port);
+                    uint16_t dotColor = svcs[i].up ? LCD_GREEN : LCD_RED;
+                    gfx->fillCircle(x + 3, y - 5, 3, dotColor);
+                    drawUtf8(gfx, lbl, x + 10, y, 0xD0D0D0);
                     if (svcs[i].up) {
                         gfx->setTextSize(1);
-                        gfx->setTextColor(LCD_GREEN, LCD_BLACK);
-                        gfx->setCursor(x + 8, y);
-                        gfx->printf(" %dms", svcs[i].latency_ms);
+                        gfx->setTextColor(svcDelayColor(svcs[i].latency_ms), LCD_BLACK);
+                        gfx->setCursor(x + 10 + utf8Width(lbl) + SVC_PREFIX, y);
+                        gfx->printf("> %dms", svcs[i].latency_ms);
                     } else {
-                        drawUtf8(gfx, " 离线", x + 8, y, 0xF08080);
+                        gfx->setTextSize(1);
+                        gfx->setTextColor(0xF08080, LCD_BLACK);
+                        gfx->setCursor(x + 10 + utf8Width(lbl) + SVC_PREFIX, y);
+                        gfx->print("> --");
                     }
                 }
-                // 页码点 (超过2个时显示)
+                // 页码点 (超过2个服务时显示)
                 if (n > 2) {
                     int totalPages = (n + 1) / 2;
                     for (int p = 0; p < totalPages; p++) {
                         int px = LCD_W / 2 - (totalPages * 6) / 2 + p * 6;
-                        gfx->fillCircle(px, 230, 2, (p == svcPage) ? LCD_WHITE : 0x404040);
+                        gfx->fillCircle(px, LCD_H - 4, 2, (p == svcPage) ? LCD_WHITE : 0x404040);
                     }
                 }
             }
@@ -355,8 +393,7 @@ void render(Arduino_GFX* gfx) {
             lastSvcUp[i] = (i < n) ? svcs[i].up : false;
             lastLatMs[i] = (i < n) ? svcs[i].latency_ms : 0;
         }
-        lastSvcCount = n;
-    }
+        }
 
     // 更新跟踪状态
     lastValid = clock.valid;

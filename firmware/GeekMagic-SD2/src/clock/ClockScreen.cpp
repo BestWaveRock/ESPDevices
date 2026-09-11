@@ -23,6 +23,7 @@
 #include "lunar/LunarCalendar.h"
 #include "config/ConfigManager.h"
 #include "fonts/cjk_font.h"
+#include "fonts/glcd5x7.h"
 #include <string.h>
 #include <stddef.h>
 #include <pgmspace.h>
@@ -69,31 +70,23 @@ static int findGlyph(const uint32_t* cps, uint16_t count, uint32_t cp) {
     return -1;
 }
 
-// s2: 半单位缩放参数 (2=1x, 1=0.5x, 3=1.5x, 4=2x). 目标像素 = 源像素 * s2 / 2 (最近邻)
-static int16_t sscale(int16_t v, uint8_t s2) {
-    return (int16_t)(((int32_t)v * s2 + 1) / 2);
+// 定点缩放: scale256 每倍=256 (范围 0.5x..4x). 目标像素 = v*scale256/256 (最近邻)
+static int16_t sscale(int16_t v, uint16_t scale256) {
+    return (int16_t)(((int32_t)v * scale256 + 128) >> 8);
 }
 
-// px 字号 -> 半单位缩放 (base 为字库原始像素高度)
-static uint8_t scale2FromPx(int px, int base) {
+// px 字号 -> 定点缩放比例 (base 为字库原始像素高度). 真实 px 渲染,
+// 不再折算成离散档位: px 即渲染高度.
+static uint16_t scaleFromPx(int px, int base) {
+    if (base <= 0) base = 1;
     if (px < base / 2) px = base / 2;
-    int s2 = (px * 2 + base / 2) / base;
-    if (s2 < 1) s2 = 1;
-    if (s2 > 4) s2 = 4;
-    return (uint8_t)s2;
+    uint32_t s = ((uint32_t)px << 8) / (uint32_t)base;
+    if (s < 128) s = 128;    // 最小 0.5x
+    if (s > 1024) s = 1024;  // 最大 4x
+    return (uint16_t)s;
 }
 
-// px 字号 -> GLCD textSize (GLCD 基础 6x8, 8px/等级)
-static uint8_t glcdFromPx(int px) {
-    if (px < 8) px = 8;
-    if (px > 24) px = 24;
-    uint8_t ts = (uint8_t)((px + 4) / 8);
-    if (ts < 1) ts = 1;
-    if (ts > 3) ts = 3;
-    return ts;
-}
-
-int16_t utf8Width(const char* s, uint8_t s2) {
+int16_t utf8Width(const char* s, uint16_t scale256) {
     const char* p = s;
     int16_t w = 0;
     while (*p) {
@@ -102,15 +95,15 @@ int16_t utf8Width(const char* s, uint8_t s2) {
         if (idx >= 0) {
             Glyph g;
             glyphAt(CJKMetrics, (uint16_t)idx, &g);
-            w += sscale(g.adv, s2);
+            w += sscale(g.adv, scale256);
         } else {
-            w += sscale(12, s2);
+            w += sscale(12, scale256);
         }
     }
     return w;
 }
 
-void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint16_t color, uint8_t s2) {
+void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint16_t color, uint16_t scale256) {
     const char* p = s;
     while (*p) {
         uint32_t cp = decodeUtf8(p);
@@ -119,15 +112,15 @@ void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint
             Glyph g;
             glyphAt(CJKMetrics, (uint16_t)idx, &g);
             if (g.w > 0 && g.h > 0) {
-                if (s2 == 2) {
+                if (scale256 == 256) {
                     gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CJKBitmaps[g.off], g.w, g.h,
                                     color);
                 } else {
-                    // 最近邻缩放绘制 (s2=半单位, 目标: 源*s2/2)
-                    int16_t nw = sscale(g.w, s2);
-                    int16_t nh = sscale(g.h, s2);
-                    int16_t nx = x + sscale(g.xoff, s2);
-                    int16_t ny = baseline + sscale(g.yoff, s2);
+                    // 最近邻缩放绘制 (目标: 源*scale256/256)
+                    int16_t nw = sscale(g.w, scale256);
+                    int16_t nh = sscale(g.h, scale256);
+                    int16_t nx = x + sscale(g.xoff, scale256);
+                    int16_t ny = baseline + sscale(g.yoff, scale256);
                     uint8_t bw = (uint8_t)((g.w + 7) / 8);
                     for (int16_t dy = 0; dy < nh; dy++) {
                         int16_t sy = (int16_t)((dy * g.h) / nh);
@@ -139,9 +132,9 @@ void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint
                     }
                 }
             }
-            x += sscale(g.adv, s2);
+            x += sscale(g.adv, scale256);
         } else {
-            x += sscale(12, s2);
+            x += sscale(12, scale256);
         }
     }
 }
@@ -195,11 +188,11 @@ void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uin
 // 因此旧数字可能比新数字更宽/更高. 若按新数字尺寸清格, 旧数字右侧/底部会残留线条.
 // 解法: 用固定满格清除框. 相邻数字像素间有 >=2px 间隙 (左邻最右到 x+2, 本位最左 x+4,
 // 右邻最左 x+28), 清 x+3..x+26 (24px) 可完全覆盖旧数字而不误伤左右邻居.
-// s2: 半单位缩放 (2=1x, 1=0.5x, 3=1.5x, 4=2x), 最近邻缩放
+// scale256: 定点缩放比例 (256=1x, 128=0.5x, 384=1.5x, 512=2x), 最近邻缩放
 static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, int16_t baseline, uint16_t color,
-                             uint8_t s2) {
-    if (s2 < 1) s2 = 1;
-    if (s2 > 4) s2 = 4;
+                             uint16_t scale256) {
+    if (scale256 < 128) scale256 = 128;
+    if (scale256 > 1024) scale256 = 1024;
     int16_t totalW = 0;
     {
         const char* pp = s;
@@ -208,9 +201,9 @@ static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, 
             if (idx >= 0) {
                 Glyph g;
                 glyphAt(CLKMetrics, (uint16_t)idx, &g);
-                totalW += sscale(g.adv, s2);
+                totalW += sscale(g.adv, scale256);
             } else {
-                totalW += sscale(12, s2);
+                totalW += sscale(12, scale256);
             }
             pp++;
         }
@@ -226,17 +219,17 @@ static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, 
             glyphAt(CLKMetrics, (uint16_t)idx, &g);
             if (changed && g.w > 0 && g.h > 0) {
                 // 固定满格清除: 覆盖任意前驱数字的完整像素范围, 高度取数字最大 34+余量
-                int16_t cw = sscale(24, s2);
-                int16_t chh = sscale(36, s2);
-                gfx->fillRect(x + sscale(3, s2), baseline - chh, cw, chh, LCD_BLACK);
-                if (s2 == 2) {
+                int16_t cw = sscale(24, scale256);
+                int16_t chh = sscale(36, scale256);
+                gfx->fillRect(x + sscale(3, scale256), baseline - chh, cw, chh, LCD_BLACK);
+                if (scale256 == 256) {
                     gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CLKBitmaps[g.off], g.w, g.h,
                                     color);
                 } else {
-                    int16_t nw = sscale(g.w, s2);
-                    int16_t nh = sscale(g.h, s2);
-                    int16_t nx = x + sscale(g.xoff, s2);
-                    int16_t ny = baseline + sscale(g.yoff, s2);
+                    int16_t nw = sscale(g.w, scale256);
+                    int16_t nh = sscale(g.h, scale256);
+                    int16_t nx = x + sscale(g.xoff, scale256);
+                    int16_t ny = baseline + sscale(g.yoff, scale256);
                     uint8_t bw = (uint8_t)((g.w + 7) / 8);
                     for (int16_t dy = 0; dy < nh; dy++) {
                         int16_t sy = (int16_t)((dy * g.h) / nh);
@@ -248,9 +241,9 @@ static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, 
                     }
                 }
             }
-            x += sscale(g.adv, s2);
+            x += sscale(g.adv, scale256);
         } else {
-            x += sscale(12, s2);
+            x += sscale(12, scale256);
         }
         p++;
         q++;
@@ -280,21 +273,44 @@ static uint16_t svcDelayColor(int ms) {
     return (uint16_t)0x4C40;
 }
 
+// GLCD 5x7 字体: px 任意缩放绘制 (真实 px, 非档位). scale256=px*256/8.
+// 字形 5 列 x 8 行 (第8行存 g/y/p/q 等下伸部分, LSB 为顶行), 字符等宽 6 列.
+// 反向映射 (目标像素 -> 源列/行), 与 CJK 缩放一致, 非整数倍缩放无列空洞/黑线.
+static void drawGlcd(Arduino_GFX* gfx, const char* s, int16_t x, int16_t y, uint16_t color, uint16_t scale256) {
+    if (scale256 < 128) scale256 = 128;
+    if (scale256 > 1024) scale256 = 1024;
+    const char* p = s;
+    int16_t cx = x;
+    while (*p) {
+        unsigned char c = (unsigned char)*p;
+        if (c < 0x20) { p++; continue; }
+        if (c > 0x7E) c = '?';
+        const uint8_t* cols = &GLCD5x7[(unsigned)(c - 0x20) * 5];
+        int16_t nw = sscale(6, scale256);   // 字符格宽
+        int16_t gw = sscale(5, scale256);   // 字形区宽
+        int16_t gh = sscale(8, scale256);   // 字形区高 (含下伸行)
+        for (int16_t dy = 0; dy < gh; dy++) {
+            int16_t sy = (int16_t)((dy * 8) / gh);   // 源行 0..7
+            uint8_t mask = (uint8_t)(1 << sy);
+            for (int16_t dx = 0; dx < gw; dx++) {
+                int16_t sx = (int16_t)((dx * 5) / gw);  // 源列
+                if (pgm_read_byte(&cols[sx]) & mask) gfx->writePixel(cx + dx, y + dy, color);
+            }
+        }
+        cx += nw;
+        p++;
+    }
+}
+
 // 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
 static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
-    uint8_t dfs = glcdFromPx(configManager.dateFontSize);
-    uint8_t ifs = glcdFromPx(configManager.ipFontSize);
-    gfx->setTextSize(dfs);
-    gfx->setTextColor(0xB0B0B0, LCD_BLACK);
-    gfx->setCursor(4, IP_Y);
-    gfx->print(dateStr ? dateStr : "");
+    uint16_t dfs = scaleFromPx(configManager.dateFontSize, 8);
+    uint16_t ifs = scaleFromPx(configManager.ipFontSize, 8);
+    drawGlcd(gfx, dateStr ? dateStr : "", 4, IP_Y, 0xB0B0B0, dfs);
 
     if (ip && ip[0] != '\0') {
-        int16_t pw = (int16_t)(strlen(ip) * 6 * ifs);
-        gfx->setTextSize(ifs);
-        gfx->setTextColor(0x608060, LCD_BLACK);
-        gfx->setCursor(LCD_W - 4 - pw, IP_Y);
-        gfx->print(ip);
+        int16_t pw = sscale((int16_t)strlen(ip) * 6, ifs);
+        drawGlcd(gfx, ip, LCD_W - 4 - pw, IP_Y, 0x608060, ifs);
     }
 }
 
@@ -353,30 +369,31 @@ void render(Arduino_GFX* gfx) {
 
     // 顶栏: 左日期+星期, 右 IP (合并独立区, 任一变化时重绘整区)
     if (topBarChanged) {
-        uint8_t dfs = glcdFromPx(configManager.dateFontSize);
-        uint8_t ifs = glcdFromPx(configManager.ipFontSize);
-        int16_t h = dfs * 8 + 4;
-        if (ifs * 8 + 4 > h) h = ifs * 8 + 4;
+        uint16_t dfs = scaleFromPx(configManager.dateFontSize, 8);
+        uint16_t ifs = scaleFromPx(configManager.ipFontSize, 8);
+        int16_t h = sscale(8, dfs) + 4;
+        if (sscale(8, ifs) + 4 > h) h = sscale(8, ifs) + 4;
         if (h < 18) h = 18;
         gfx->fillRect(0, 0, LCD_W, h, LCD_BLACK);
         drawTopBar(gfx, dateStr, ipBuf);
     }
 
     // 时钟行 (秒级, 逐数字)
-    uint8_t clkS2 = scale2FromPx(configManager.clockFontSize, 34);
+    uint16_t clkScale = scaleFromPx(configManager.clockFontSize, 34);
     if (clock.valid) {
         char tbuf[16];
         snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", clock.hour, clock.min, clock.sec);
         if (first || !lastValid) {
-            gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkS2) - 2, LCD_W, sscale(36, clkS2) + 2, LCD_BLACK);
+            gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkScale) - 2, LCD_W, sscale(36, clkScale) + 2, LCD_BLACK);
         }
-        drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, LCD_WHITE, clkS2);
+        drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, LCD_WHITE, clkScale);
         strncpy(lastTimeStr, tbuf, sizeof(lastTimeStr) - 1);
         lastTimeStr[sizeof(lastTimeStr) - 1] = '\0';
     } else {
-        gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkS2) - 2, LCD_W, sscale(36, clkS2) + 2, LCD_BLACK);
+        gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkScale) - 2, LCD_W, sscale(36, clkScale) + 2, LCD_BLACK);
         static const char* t = "同步时间中...";
-        drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, CLOCK_BASELINE, 0x608060);
+        uint16_t syncScale = scaleFromPx(configManager.clockFontSize, 34);
+        drawUtf8(gfx, t, (LCD_W - utf8Width(t, syncScale)) / 2, CLOCK_BASELINE, 0x608060, syncScale);
         lastTimeStr[0] = '\0';
     }
 
@@ -385,25 +402,25 @@ void render(Arduino_GFX* gfx) {
         char lunarbuf[16];
         LunarCalendar::text(clock.year, clock.mon, clock.day, lunarbuf, sizeof(lunarbuf));
         if (lunarbuf[0] != '\0') {
-            uint8_t lS2 = scale2FromPx(configManager.lunarFontSize, 16);
-            int16_t lh = sscale(18, lS2) + 2;
+            uint16_t lScale = scaleFromPx(configManager.lunarFontSize, 16);
+            int16_t lh = sscale(18, lScale) + 2;
             gfx->fillRect(0, LUNAR_BASELINE - lh, LCD_W, lh, LCD_BLACK);
-            int16_t lw = utf8Width(lunarbuf, lS2);
-            drawUtf8(gfx, lunarbuf, (LCD_W - lw) / 2, LUNAR_BASELINE, 0xD0D0D0, lS2);
+            int16_t lw = utf8Width(lunarbuf, lScale);
+            drawUtf8(gfx, lunarbuf, (LCD_W - lw) / 2, LUNAR_BASELINE, 0xD0D0D0, lScale);
         }
     }
 
     // 天气行: 区+天气+气温
     if (weatherChanged) {
-        uint8_t wS2 = scale2FromPx(configManager.weatherFontSize, 16);
-        int16_t wh = sscale(20, wS2) + 2;
+        uint16_t wScale = scaleFromPx(configManager.weatherFontSize, 16);
+        int16_t wh = sscale(20, wScale) + 2;
         gfx->fillRect(0, WEATHER_BASELINE - wh, LCD_W, wh, LCD_BLACK);
         const char* district = city;  // city 完整显示, 不再截取
-        int16_t dw = utf8Width(district, wS2);
-        int16_t ww = utf8Width(wlbuf, wS2);
-        int16_t sx = (LCD_W - (dw + sscale(8, wS2) + ww)) / 2;
-        drawUtf8(gfx, district, sx, WEATHER_BASELINE, 0x90E090, wS2);
-        drawUtf8(gfx, wlbuf, sx + dw + sscale(8, wS2), WEATHER_BASELINE, LCD_WHITE, wS2);
+        int16_t dw = utf8Width(district, wScale);
+        int16_t ww = utf8Width(wlbuf, wScale);
+        int16_t sx = (LCD_W - (dw + sscale(8, wScale) + ww)) / 2;
+        drawUtf8(gfx, district, sx, WEATHER_BASELINE, 0x90E090, wScale);
+        drawUtf8(gfx, wlbuf, sx + dw + sscale(8, wScale), WEATHER_BASELINE, LCD_WHITE, wScale);
     }
 
     // 服务行 (单列定宽: 状态点 + 定宽地址 + 空6px + 延迟ms; 两行/页, 每10秒轮播)
@@ -425,13 +442,15 @@ void render(Arduino_GFX* gfx) {
             gfx->fillRect(0, SVC_TOP - 2, LCD_W, LCD_H - SVC_TOP + 2, LCD_BLACK);
             if (n == 0) {
                 static const char* t = "未配置监控服务";
-                drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, SVC_TOP + 20, 0x606060);
+                uint16_t ns = scaleFromPx(configManager.serviceFontSize, 16);
+                drawUtf8(gfx, t, (LCD_W - utf8Width(t, ns)) / 2, SVC_TOP + 20, 0x606060, ns);
             } else {
-                uint8_t svcFs = glcdFromPx(configManager.serviceFontSize);
-                int16_t addrW = svcFs * 96 + 40;   // 地址定宽: size1=136, size2=232, size3=328
+                uint16_t svcScale = scaleFromPx(configManager.serviceFontSize, 8);
+                int16_t adv = sscale(6, svcScale);
+                int16_t addrW = adv * 16 + 40;   // 地址定宽: 最长16字符*adv + 40px
                 int pageStart = svcPage * 2;
                 int rowsOnPage = (n - pageStart >= 2) ? 2 : (n - pageStart);
-                int16_t textH = 8 * svcFs;
+                int16_t textH = sscale(8, svcScale);
                 int16_t yOff = (SVC_ROW_H - textH) / 2;   // 文本在行高内垂直居中
                 for (int r = 0; r < rowsOnPage; r++) {
                     int i = pageStart + r;
@@ -442,20 +461,13 @@ void render(Arduino_GFX* gfx) {
                     gfx->fillCircle(x + 3, y + textH / 2, 3, dotColor);
                     char lbl[48];
                     snprintf(lbl, sizeof(lbl), "%s:%d", svcs[i].ip.c_str(), svcs[i].port);
-                    gfx->setTextSize(svcFs);
-                    gfx->setTextColor(0xD0D0D0, LCD_BLACK);
-                    gfx->setCursor(x + 10, y);
-                    gfx->print(lbl);
+                    drawGlcd(gfx, lbl, x + 10, y, 0xD0D0D0, svcScale);
                     if (svcs[i].up) {
-                        gfx->setTextSize(svcFs);
-                        gfx->setTextColor(svcDelayColor(svcs[i].latency_ms), LCD_BLACK);
-                        gfx->setCursor(x + addrW + SVC_GAP, y);
-                        gfx->printf("%dms", svcs[i].latency_ms);
+                        char ms[16];
+                        snprintf(ms, sizeof(ms), "%dms", svcs[i].latency_ms);
+                        drawGlcd(gfx, ms, x + addrW + SVC_GAP, y, svcDelayColor(svcs[i].latency_ms), svcScale);
                     } else {
-                        gfx->setTextSize(svcFs);
-                        gfx->setTextColor(0xF08080, LCD_BLACK);
-                        gfx->setCursor(x + addrW + SVC_GAP, y);
-                        gfx->print("down");
+                        drawGlcd(gfx, "down", x + addrW + SVC_GAP, y, 0xF08080, svcScale);
                     }
                 }
                 // 页码点 (超过2个服务时显示)

@@ -211,13 +211,22 @@ static constexpr uint8_t ST7789_ADDR_END_LOW = 0xEF;
 auto DisplayManager::getGfx() -> Arduino_GFX* { return &g_lcd; }
 
 /**
- * @brief Turn the LCD backlight on
+ * @brief Set LCD backlight PWM brightness
  *
+ * ESP8266 software PWM. level 1-10, active-low backlight so
+ * level=10 (brightest) maps to duty 0 (always on), level=1 maps near-off.
+ *
+ * @param level brightness level in [1, 10]
  * @return void
  */
-static inline void lcdBacklightOn() {
+static inline void lcdBacklightSet(int level) {
+    if (level < 1) level = 1;
+    if (level > 10) level = 10;
     pinMode((uint8_t)LCD_BACKLIGHT_GPIO, OUTPUT);
-    digitalWrite((uint8_t)LCD_BACKLIGHT_GPIO, LCD_BACKLIGHT_ACTIVE_LOW ? LOW : HIGH);
+    analogWriteRange(255);
+    analogWriteFreq(1000);
+    int duty = (10 - level) * 255 / 10;
+    analogWrite((uint8_t)LCD_BACKLIGHT_GPIO, duty);
 }
 
 /**
@@ -408,7 +417,7 @@ static void lcdHardReset() {
 static void lcdEnsureInit() {
     Logger::info("Initialization started", "DisplayManager");
 
-    lcdBacklightOn();
+    lcdBacklightSet(configManager.brightness);
 
     uint8_t rotation = configManager.getLCDRotationSafe();
 

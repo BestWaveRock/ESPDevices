@@ -267,6 +267,50 @@ static const int16_t SVC_ROW_H = 26;
 static const int16_t SVC_GAP = 4;
 static const int16_t SVC_TOP = (SVC_BAND_TOP + SVC_BAND_BOTTOM) / 2 - SVC_ROW_H;
 
+// 主题配色: 影响文字/图形可选色. 10 套; configManager.theme 选择.
+struct ThemePalette {
+    uint16_t topBarDate;   // 顶栏日期+星期
+    uint16_t ip;           // 顶栏 IP
+    uint16_t clock;        // 时钟数字
+    uint16_t sync;         // 同步时间中...
+    uint16_t lunar;        // 农历
+    uint16_t weatherArea;  // 天气地区
+    uint16_t weatherInfo;  // 天气信息(温度+描述)
+    uint16_t pie;          // 天气刷新饼图
+    uint16_t svcNone;      // 未配置监控服务
+    uint16_t svcAddr;      // 服务地址
+};
+
+static const ThemePalette THEMES[10] = {
+    // 0 Green (默认)
+    {0xAD75, 0x640C, LCD_WHITE, 0x640C, 0xCE79, 0x96F2, LCD_WHITE, 0x3499, 0x630C, 0xCE79},
+    // 1 Blue
+    {0x9DFB, 0x4418, LCD_WHITE, 0x4418, 0xC6DD, 0x651D, 0xE79F, 0x2399, 0x53D3, 0xC6DD},
+    // 2 Purple
+    {0xB55A, 0x9297, LCD_WHITE, 0x9297, 0xD65D, 0x9B9C, 0xEF5F, 0x7195, 0x624F, 0xD65D},
+    // 3 Cyan
+    {0x9EBA, 0x3513, LCD_WHITE, 0x3513, 0xC77D, 0x569A, 0xE7FF, 0x1451, 0x43CF, 0xC77D},
+    // 4 Amber
+    {0xEEB3, 0xBC46, LCD_WHITE, 0xBC46, 0xF738, 0xED48, 0xFFBA, 0xAB84, 0x8B89, 0xF738},
+    // 5 Red
+    {0xED73, 0xBA46, LCD_WHITE, 0xBA46, 0xF678, 0xE34A, 0xFF7D, 0xA984, 0x8A48, 0xF678},
+    // 6 Pink
+    {0xEDF9, 0xCB52, LCD_WHITE, 0xCB52, 0xF6BC, 0xEC14, 0xFF7E, 0xBA8F, 0x8B0E, 0xF6BC},
+    // 7 Orange
+    {0xF6B5, 0xD406, LCD_WHITE, 0xD406, 0xF738, 0xF4C7, 0xFF9B, 0xC343, 0x8B49, 0xF6B5},
+    // 8 White
+    {0xBDF7, 0x8410, LCD_WHITE, 0x8410, 0xD6BA, 0x9D13, LCD_WHITE, 0x8C52, 0x738E, 0xD6BA},
+    // 9 Yellow
+    {0xE6F3, 0xAD04, LCD_WHITE, 0xAD04, 0xEF58, 0xCDE6, 0xFFD8, 0x9402, 0x83C7, 0xEF58},
+};
+
+static const ThemePalette& currentTheme() {
+    int t = configManager.theme;
+    if (t < 0) t = 0;
+    if (t > 9) t = 9;
+    return THEMES[t];
+}
+
 // 延迟ms: <30绿, 30-99黄, 100-299橙, >=300深橙(红)
 static uint16_t svcDelayColor(int ms) {
     if (ms < 30) return (uint16_t)0x0A00;
@@ -342,13 +386,14 @@ static void drawPie(Arduino_GFX* gfx, int16_t cx, int16_t cy, int16_t r, float f
 
 // 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
 static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
+    const ThemePalette& th = currentTheme();
     uint16_t dfs = scaleFromPx(configManager.dateFontSize, 8);
     uint16_t ifs = scaleFromPx(configManager.ipFontSize, 8);
-    drawGlcd(gfx, dateStr ? dateStr : "", 4, IP_Y, 0xB0B0B0, dfs);
+    drawGlcd(gfx, dateStr ? dateStr : "", 4, IP_Y, th.topBarDate, dfs);
 
     if (ip && ip[0] != '\0') {
         int16_t pw = sscale((int16_t)strlen(ip) * 6, ifs);
-        drawGlcd(gfx, ip, LCD_W - 4 - pw, IP_Y, 0x608060, ifs);
+        drawGlcd(gfx, ip, LCD_W - 4 - pw, IP_Y, th.ip, ifs);
     }
 }
 
@@ -427,14 +472,14 @@ void render(Arduino_GFX* gfx) {
         if (first || !lastValid) {
             gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkScale) - 2, LCD_W, sscale(36, clkScale) + 2, LCD_BLACK);
         }
-        drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, LCD_WHITE, clkScale);
+        drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, currentTheme().clock, clkScale);
         strncpy(lastTimeStr, tbuf, sizeof(lastTimeStr) - 1);
         lastTimeStr[sizeof(lastTimeStr) - 1] = '\0';
     } else {
         gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkScale) - 2, LCD_W, sscale(36, clkScale) + 2, LCD_BLACK);
         static const char* t = "同步时间中...";
         uint16_t syncScale = scaleFromPx(configManager.clockFontSize, 34);
-        drawUtf8(gfx, t, (LCD_W - utf8Width(t, syncScale)) / 2, CLOCK_BASELINE, 0x608060, syncScale);
+        drawUtf8(gfx, t, (LCD_W - utf8Width(t, syncScale)) / 2, CLOCK_BASELINE, currentTheme().sync, syncScale);
         lastTimeStr[0] = '\0';
     }
 
@@ -447,7 +492,7 @@ void render(Arduino_GFX* gfx) {
             int16_t lh = sscale(18, lScale) + 2;
             gfx->fillRect(0, LUNAR_BASELINE - lh, LCD_W, lh, LCD_BLACK);
             int16_t lw = utf8Width(lunarbuf, lScale);
-            drawUtf8(gfx, lunarbuf, (LCD_W - lw) / 2, LUNAR_BASELINE, 0xD0D0D0, lScale);
+            drawUtf8(gfx, lunarbuf, (LCD_W - lw) / 2, LUNAR_BASELINE, currentTheme().lunar, lScale);
         }
     }
 
@@ -463,8 +508,8 @@ void render(Arduino_GFX* gfx) {
     int16_t x0w = (LCD_W - (tw + gap + pieD)) / 2;
     if (weatherChanged) {
         gfx->fillRect(0, WEATHER_BASELINE - wh, LCD_W, wh, LCD_BLACK);
-        drawUtf8(gfx, district, x0w, WEATHER_BASELINE, 0x90E090, wScale);
-        drawUtf8(gfx, wlbuf, x0w + dw + sscale(8, wScale), WEATHER_BASELINE, LCD_WHITE, wScale);
+        drawUtf8(gfx, district, x0w, WEATHER_BASELINE, currentTheme().weatherArea, wScale);
+        drawUtf8(gfx, wlbuf, x0w + dw + sscale(8, wScale), WEATHER_BASELINE, currentTheme().weatherInfo, wScale);
     }
     // 饼图: 剩余进度 (从满到空). 刚拉取完 frac≈1 (满圆), 随时间递减到 0.
     {
@@ -486,7 +531,7 @@ void render(Arduino_GFX* gfx) {
             int16_t pieCy = WEATHER_BASELINE - wh / 2;
             int16_t r = pieD / 2;
             gfx->fillRect(pieCx - r - 1, pieCy - r - 1, pieD + 2, pieD + 2, LCD_BLACK);
-            drawPie(gfx, pieCx, pieCy, r, frac, 0x3090D0);
+            drawPie(gfx, pieCx, pieCy, r, frac, currentTheme().pie);
         }
     }
 
@@ -510,7 +555,7 @@ void render(Arduino_GFX* gfx) {
             if (n == 0) {
                 static const char* t = "未配置监控服务";
                 uint16_t ns = scaleFromPx(configManager.serviceFontSize, 16);
-                drawUtf8(gfx, t, (LCD_W - utf8Width(t, ns)) / 2, SVC_TOP + 20, 0x606060, ns);
+                drawUtf8(gfx, t, (LCD_W - utf8Width(t, ns)) / 2, SVC_TOP + 20, currentTheme().svcNone, ns);
             } else {
                 uint16_t svcScale = scaleFromPx(configManager.serviceFontSize, 8);
                 int16_t adv = sscale(6, svcScale);
@@ -528,13 +573,13 @@ void render(Arduino_GFX* gfx) {
                     gfx->fillCircle(x + 3, y + textH / 2, 3, dotColor);
                     char lbl[48];
                     snprintf(lbl, sizeof(lbl), "%s:%d", svcs[i].ip.c_str(), svcs[i].port);
-                    drawGlcd(gfx, lbl, x + 10, y, 0xD0D0D0, svcScale);
+                    drawGlcd(gfx, lbl, x + 10, y, currentTheme().svcAddr, svcScale);
                     if (svcs[i].up) {
                         char ms[16];
                         snprintf(ms, sizeof(ms), "%dms", svcs[i].latency_ms);
                         drawGlcd(gfx, ms, x + addrW + SVC_GAP, y, svcDelayColor(svcs[i].latency_ms), svcScale);
                     } else {
-                        drawGlcd(gfx, "down", x + addrW + SVC_GAP, y, 0xF08080, svcScale);
+                        drawGlcd(gfx, "down", x + addrW + SVC_GAP, y, (uint16_t)0xF410, svcScale);
                     }
                 }
                 // 页码点 (超过2个服务时显示)

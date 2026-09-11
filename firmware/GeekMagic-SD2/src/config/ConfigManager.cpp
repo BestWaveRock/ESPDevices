@@ -84,6 +84,12 @@ auto ConfigManager::load() -> bool {
     this->weatherFontSize = doc["weatherFontSize"] | weatherFontSize;
     this->serviceFontSize = doc["serviceFontSize"] | serviceFontSize;
     this->reverseMap = doc["reverseMap"] | reverseMap;
+    this->theme = doc["theme"] | theme;
+    if (theme < 0) theme = 0;
+    if (theme > 9) theme = 9;
+    this->brightness = doc["brightness"] | brightness;
+    if (brightness < 1) brightness = 1;
+    if (brightness > 10) brightness = 10;
 
     String nvs_ssid = secure.get("wifi_ssid", "");
     String nvs_password = secure.get("wifi_password", "");
@@ -234,6 +240,8 @@ auto ConfigManager::save() -> bool {
     doc["weatherFontSize"] = weatherFontSize;
     doc["serviceFontSize"] = serviceFontSize;
     doc["reverseMap"] = reverseMap;
+    doc["theme"] = theme;
+    doc["brightness"] = brightness;
 
     if (serializeJson(doc, file) == 0) {
         Logger::error("Failed to write config file", "ConfigManager");

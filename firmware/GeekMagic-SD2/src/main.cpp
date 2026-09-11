@@ -208,6 +208,19 @@ void setup() {
                 "<label>Weather font size (px, 16-48)</label><input name='weatherFontSize' type='number' min='16' max='48' value='" + String(configManager.weatherFontSize) + "'>"
                 "<label>Service font size (px, 8-24)</label><input name='serviceFontSize' type='number' min='8' max='24' value='" + String(configManager.serviceFontSize) + "'>"
                 "<label><input name='reverseMap' type='checkbox'" + String(configManager.reverseMap ? " checked" : "") + "> GLCD reverse map (fix black lines on non-integer scaling)</label>"
+                "<label>Theme color</label><select name='theme'>"
+                "<option value='0'" + String(configManager.theme == 0 ? " selected" : "") + ">0 Green</option>"
+                "<option value='1'" + String(configManager.theme == 1 ? " selected" : "") + ">1 Blue</option>"
+                "<option value='2'" + String(configManager.theme == 2 ? " selected" : "") + ">2 Purple</option>"
+                "<option value='3'" + String(configManager.theme == 3 ? " selected" : "") + ">3 Cyan</option>"
+                "<option value='4'" + String(configManager.theme == 4 ? " selected" : "") + ">4 Amber</option>"
+                "<option value='5'" + String(configManager.theme == 5 ? " selected" : "") + ">5 Red</option>"
+                "<option value='6'" + String(configManager.theme == 6 ? " selected" : "") + ">6 Pink</option>"
+                "<option value='7'" + String(configManager.theme == 7 ? " selected" : "") + ">7 Orange</option>"
+                "<option value='8'" + String(configManager.theme == 8 ? " selected" : "") + ">8 White</option>"
+                "<option value='9'" + String(configManager.theme == 9 ? " selected" : "") + ">9 Yellow</option>"
+                "</select>"
+                "<label>Backlight brightness (1-10)</label><input name='brightness' type='number' min='1' max='10' value='" + String(configManager.brightness) + "'>"
                 "<button type='submit'>Save &amp; Reboot</button>"
                 "</form></body></html>";
             webserver->raw().send(200, "text/html; charset=UTF-8", html.c_str());
@@ -238,6 +251,10 @@ void setup() {
             configManager.serviceFontSize = server.arg("serviceFontSize").toInt();
             if (configManager.serviceFontSize < 8 || configManager.serviceFontSize > 24) configManager.serviceFontSize = 8;
             configManager.reverseMap = server.hasArg("reverseMap") && server.arg("reverseMap") == "on";
+            configManager.theme = server.arg("theme").toInt();
+            if (configManager.theme < 0 || configManager.theme > 9) configManager.theme = 0;
+            configManager.brightness = server.arg("brightness").toInt();
+            if (configManager.brightness < 1 || configManager.brightness > 10) configManager.brightness = 5;
             configManager.save();
             server.send(200, "text/html; charset=UTF-8",
                         "<html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/config'>"

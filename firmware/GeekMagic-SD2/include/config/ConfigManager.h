@@ -85,6 +85,8 @@ class ConfigManager {
     int weatherFontSize = 18;                    // 天气字号(px, CJK基础16px)
     int serviceFontSize = 8;                     // 服务监测字号(px, GLCD基础8px)
     bool reverseMap = true;                      // GLCD 反向映射渲染(目标->源, 消除非整数倍缩放的列空洞/黑线); false=正向
+    int theme = 0;                               // 主题颜色索引 0-9 (影响文字/图形配色, 重启生效)
+    int brightness = 5;                          // 背光亮度 1-10 (10=最亮)
 
     const char* getCity() const { return city.c_str(); }
     const char* getServices() const { return services.c_str(); }

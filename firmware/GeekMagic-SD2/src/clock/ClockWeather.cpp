@@ -183,17 +183,22 @@ static void checkServices() {
     for (int i = 0; i < s_serviceCount; i++) {
         WiFiClient c;
         c.setTimeout(2000);
+        unsigned long t0 = millis();
         int r = c.connect(s_services[i].ip.c_str(), s_services[i].port);
+        unsigned long elapsed = millis() - t0;
         if (r == 1) {
             s_services[i].up = true;
-            s_services[i].last_ms = millis();
+            s_services[i].last_ms = t0;
+            s_services[i].latency_ms = (int)elapsed;
             c.stop();
         } else {
             s_services[i].up = false;
+            s_services[i].last_ms = 0;
+            s_services[i].latency_ms = -1;
             c.stop();
         }
         Logger::info(("svc " + s_services[i].ip + ":" + String(s_services[i].port) +
-                      (s_services[i].up ? " UP" : " DOWN")).c_str(), TAG);
+                      (s_services[i].up ? (" UP " + String(elapsed) + "ms") : " DOWN")).c_str(), TAG);
         yield();
     }
 }

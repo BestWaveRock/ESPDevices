@@ -159,14 +159,20 @@ static const int16_t LUNAR_BASELINE = 126;  // 农历 (CJK 大字, y 为基线)
 static const int16_t WEATHER_BASELINE = 160;
 static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
-// 顶部用内置 GLCD 字体展示本机 IP (ASCII, size1 每字符约 6px)
-static void drawIp(Arduino_GFX* gfx, const char* ip) {
-    if (ip == nullptr || ip[0] == '\0') return;
-    int w = (int)strlen(ip) * 6;
+// 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
+static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
     gfx->setTextSize(1);
-    gfx->setTextColor(0x608060, LCD_BLACK);
-    gfx->setCursor((LCD_W - w) / 2, IP_Y);
-    gfx->print(ip);
+    gfx->setTextColor(0xB0B0B0, LCD_BLACK);
+    int16_t dw = dateStr ? (int16_t)(strlen(dateStr) * 6) : 0;
+    gfx->setCursor(4, IP_Y);
+    gfx->print(dateStr ? dateStr : "");
+
+    if (ip && ip[0] != '\0') {
+        int16_t iw = (int16_t)(strlen(ip) * 6);
+        gfx->setTextColor(0x608060, LCD_BLACK);
+        gfx->setCursor(LCD_W - 4 - iw, IP_Y);
+        gfx->print(ip);
+    }
 }
 
 // 秒级时钟: 逐数字小格子刷新, 只重绘变化的数字, 无整行黑闪.
@@ -217,13 +223,15 @@ void render(Arduino_GFX* gfx) {
     String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : String("No Net");
     strncpy(ipBuf, ipStr.c_str(), sizeof(ipBuf) - 1);
     ipBuf[sizeof(ipBuf) - 1] = '\0';
-    bool ipChanged = first || strcmp(ipBuf, lastIp) != 0;
 
     // ---- 日期行 ----
     char dateKey[32] = "";
+    char dateStr[24] = "";
     if (clock.valid) {
         snprintf(dateKey, sizeof(dateKey), "%d-%02d-%02d-%d", clock.year, clock.mon, clock.day, clock.weekday);
+        snprintf(dateStr, sizeof(dateStr), "%04d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK_EN[clock.weekday]);
     }
+    bool topBarChanged = first || (strcmp(ipBuf, lastIp) != 0) || (clock.valid && strcmp(dateKey, lastDateKey) != 0);
     bool dateChanged = first || (clock.valid && strcmp(dateKey, lastDateKey) != 0);
 
     // ---- 天气行 ----
@@ -252,10 +260,10 @@ void render(Arduino_GFX* gfx) {
         gfx->fillScreen(LCD_BLACK);
     }
 
-    // IP 行 (独立)
-    if (ipChanged) {
-        gfx->fillRect(0, 0, LCD_W, 20, LCD_BLACK);
-        drawIp(gfx, ipBuf);
+    // 顶栏: 左日期+星期, 右 IP (合并独立区, 任一变化时重绘整区)
+    if (topBarChanged) {
+        gfx->fillRect(0, 0, LCD_W, 18, LCD_BLACK);
+        drawTopBar(gfx, dateStr, ipBuf);
     }
 
     // 时钟行 (秒级, 逐数字)
@@ -275,18 +283,6 @@ void render(Arduino_GFX* gfx) {
         lastTimeStr[0] = '\0';
     }
 
-    // 日期+星期行 (独立, GLCD 小字, 英文星期避免字体缺"周")
-    if (dateChanged && clock.valid) {
-        char line[24];
-        snprintf(line, sizeof(line), "%04d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK_EN[clock.weekday]);
-        gfx->fillRect(0, DATE_TOP - 1, LCD_W, 12, LCD_BLACK);
-        int16_t lw = (int16_t)(strlen(line) * 6);
-        gfx->setTextSize(1);
-        gfx->setTextColor(0xC0C0C0, LCD_BLACK);
-        gfx->setCursor((LCD_W - lw) / 2, DATE_TOP);
-        gfx->print(line);
-    }
-
     // 农历行 (独立, CJK 大字)
     if (dateChanged && clock.valid) {
         char lunarbuf[16];
@@ -298,14 +294,18 @@ void render(Arduino_GFX* gfx) {
         }
     }
 
-    // 天气行 (独立)
+    // 天气行: 区+天气+气温 (去城市全名, 只显示区名, 通常是'两江新区'这样的小范围)
     if (weatherChanged) {
         gfx->fillRect(0, 138, LCD_W, 28, LCD_BLACK);
-        int16_t cw = utf8Width(city);
+        const char* district = city;
+        const char* dot = strchr(city, '\xE7\x82\xB9');  // '·' UTF-8: E7 82 B9
+        if (dot) district = dot + 3;  // skip '·' (3-byte UTF-8)
+        if (district[0] == '\0') district = city;
+        int16_t dw = utf8Width(district);
         int16_t ww = utf8Width(wlbuf);
-        int16_t sx = (LCD_W - (cw + 10 + ww)) / 2;
-        drawUtf8(gfx, city, sx, WEATHER_BASELINE, 0x90E090);
-        drawUtf8(gfx, wlbuf, sx + cw + 10, WEATHER_BASELINE, LCD_WHITE);
+        int16_t sx = (LCD_W - (dw + 8 + ww)) / 2;
+        drawUtf8(gfx, district, sx, WEATHER_BASELINE, 0x90E090);
+        drawUtf8(gfx, wlbuf, sx + dw + 8, WEATHER_BASELINE, LCD_WHITE);
     }
 
     // 服务行 (独立)
@@ -320,8 +320,15 @@ void render(Arduino_GFX* gfx) {
             const char* sip = svcs[i].ip.c_str();
             drawUtf8(gfx, sip, x + 8, y, 0xB0B0B0);
             int16_t ipw = utf8Width(sip);
-            drawUtf8(gfx, svcs[i].up ? "在线" : "离线", x + 8 + ipw + 4, y,
-                     svcs[i].up ? 0x90E090 : 0xF08080);
+            if (svcs[i].up) {
+                char lbuf[12];
+                snprintf(lbuf, sizeof(lbuf), "%dms", svcs[i].latency_ms);
+                drawUtf8(gfx, "在线", x + 8 + ipw + 4, y, 0x90E090);
+                int16_t lw = utf8Width(lbuf);
+                drawUtf8(gfx, lbuf, x + 8 + ipw + 4 + utf8Width("在线") + 4, y, 0x90D090);
+            } else {
+                drawUtf8(gfx, "离线", x + 8 + ipw + 4, y, 0xF08080);
+            }
         }
         if (n == 0) {
             static const char* t = "未配置监控服务";

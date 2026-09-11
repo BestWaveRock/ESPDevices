@@ -30,6 +30,7 @@ namespace ClockWeather {
         int port = 80;
         bool up = false;
         unsigned long last_ms = 0;  // 0 = unknown
+        int latency_ms = -1;        // -1 = unknown
     };
 
     struct Weather {

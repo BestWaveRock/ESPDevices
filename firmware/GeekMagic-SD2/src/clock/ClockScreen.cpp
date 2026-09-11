@@ -134,7 +134,7 @@ void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint
                         const uint8_t* row = &CJKBitmaps[g.off + sy * bw];
                         for (int16_t dx = 0; dx < nw; dx++) {
                             int16_t sx = (int16_t)((dx * g.w) / nw);
-                            if (row[sx >> 3] & (0x80 >> (sx & 7))) gfx->writePixel(nx + dx, ny + dy, color);
+                            if (pgm_read_byte(row + (sx >> 3)) & (0x80 >> (sx & 7))) gfx->writePixel(nx + dx, ny + dy, color);
                         }
                     }
                 }
@@ -243,7 +243,7 @@ static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, 
                         const uint8_t* row = &CLKBitmaps[g.off + sy * bw];
                         for (int16_t dx = 0; dx < nw; dx++) {
                             int16_t sx = (int16_t)((dx * g.w) / nw);
-                            if (row[sx >> 3] & (0x80 >> (sx & 7))) gfx->writePixel(nx + dx, ny + dy, color);
+                            if (pgm_read_byte(row + (sx >> 3)) & (0x80 >> (sx & 7))) gfx->writePixel(nx + dx, ny + dy, color);
                         }
                     }
                 }
@@ -265,34 +265,19 @@ static const int16_t LUNAR_BASELINE = 126;
 static const int16_t WEATHER_BASELINE = 160;
 static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
-// 服务区: 每行1个服务, 两行/页, 超过则轮播
-static const int16_t SVC_TOP = 172;
+// 服务区: 每行1个服务, 两行/页, 超过则轮播.
+// 服务区整体在 [天气行下方, 底部页点上方] 区间内垂直居中 (两行块总高=2*SVC_ROW_H)
+static const int16_t SVC_BAND_TOP = 166;     // 天气行下方边界
+static const int16_t SVC_BAND_BOTTOM = 232;   // 页点上方边界
 static const int16_t SVC_ROW_H = 26;
 static const int16_t SVC_GAP = 4;
+static const int16_t SVC_TOP = (SVC_BAND_TOP + SVC_BAND_BOTTOM) / 2 - SVC_ROW_H;
 
 // 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
 static uint16_t svcDelayColor(int ms) {
     if (ms < 30) return (uint16_t)0x0A00;
     if (ms < 100) return (uint16_t)0x6540;
     return (uint16_t)0x4C40;
-}
-
-// 截断服务地址(超maxChars字符截)
-static void svcLabel(char* out, size_t outSz, const char* ip, int port, uint8_t maxChars) {
-    char buf[48];
-    snprintf(buf, sizeof(buf), "%s:%d", ip, port);
-    size_t len = strlen(buf);
-    if (maxChars < 4) maxChars = 4;
-    if (len > maxChars) {
-        size_t cut = maxChars - 2;
-        if (cut < 2) cut = 2;
-        strncpy(out, buf, cut);
-        out[cut] = '\0';
-        strncat(out, "..", outSz - cut - 1);
-    } else {
-        strncpy(out, buf, outSz - 1);
-        out[outSz - 1] = '\0';
-    }
 }
 
 // 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
@@ -413,7 +398,7 @@ void render(Arduino_GFX* gfx) {
         uint8_t wS2 = scale2FromPx(configManager.weatherFontSize, 16);
         int16_t wh = sscale(20, wS2) + 2;
         gfx->fillRect(0, WEATHER_BASELINE - wh, LCD_W, wh, LCD_BLACK);
-        const char* district = (strlen(city) > 8) ? (city + 8) : city;
+        const char* district = city;  // city 完整显示, 不再截取
         int16_t dw = utf8Width(district, wS2);
         int16_t ww = utf8Width(wlbuf, wS2);
         int16_t sx = (LCD_W - (dw + sscale(8, wS2) + ww)) / 2;
@@ -443,20 +428,20 @@ void render(Arduino_GFX* gfx) {
                 drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, SVC_TOP + 20, 0x606060);
             } else {
                 uint8_t svcFs = glcdFromPx(configManager.serviceFontSize);
-                int16_t addrW = svcFs * 96;   // size1=96px, size2=192px, size3=288px
+                int16_t addrW = svcFs * 96 + 40;   // 地址定宽: size1=136, size2=232, size3=328
                 int pageStart = svcPage * 2;
                 int rowsOnPage = (n - pageStart >= 2) ? 2 : (n - pageStart);
+                int16_t textH = 8 * svcFs;
+                int16_t yOff = (SVC_ROW_H - textH) / 2;   // 文本在行高内垂直居中
                 for (int r = 0; r < rowsOnPage; r++) {
                     int i = pageStart + r;
                     if (i >= n || i >= 8) break;
                     int16_t x = 8;
-                    int16_t y = SVC_TOP + r * SVC_ROW_H + (4 - svcFs) * 6 + 16;  // size↑则y↓
+                    int16_t y = SVC_TOP + r * SVC_ROW_H + yOff;
                     uint16_t dotColor = svcs[i].up ? LCD_GREEN : LCD_RED;
-                    gfx->fillCircle(x + 3, y - 5, 3, dotColor);
-                    char lbl[16];
-                    uint8_t maxChars = (uint8_t)(addrW / (6 * svcFs));
-                    if (maxChars > 16) maxChars = 16;
-                    svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port, maxChars);
+                    gfx->fillCircle(x + 3, y + textH / 2, 3, dotColor);
+                    char lbl[48];
+                    snprintf(lbl, sizeof(lbl), "%s:%d", svcs[i].ip.c_str(), svcs[i].port);
                     gfx->setTextSize(svcFs);
                     gfx->setTextColor(0xD0D0D0, LCD_BLACK);
                     gfx->setCursor(x + 10, y);
@@ -470,7 +455,7 @@ void render(Arduino_GFX* gfx) {
                         gfx->setTextSize(svcFs);
                         gfx->setTextColor(0xF08080, LCD_BLACK);
                         gfx->setCursor(x + addrW + SVC_GAP, y);
-                        gfx->print("离线");
+                        gfx->print("down");
                     }
                 }
                 // 页码点 (超过2个服务时显示)

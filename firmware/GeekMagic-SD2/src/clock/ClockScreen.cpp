@@ -69,7 +69,31 @@ static int findGlyph(const uint32_t* cps, uint16_t count, uint32_t cp) {
     return -1;
 }
 
-int16_t utf8Width(const char* s) {
+// s2: 半单位缩放参数 (2=1x, 1=0.5x, 3=1.5x, 4=2x). 目标像素 = 源像素 * s2 / 2 (最近邻)
+static int16_t sscale(int16_t v, uint8_t s2) {
+    return (int16_t)(((int32_t)v * s2 + 1) / 2);
+}
+
+// px 字号 -> 半单位缩放 (base 为字库原始像素高度)
+static uint8_t scale2FromPx(int px, int base) {
+    if (px < base / 2) px = base / 2;
+    int s2 = (px * 2 + base / 2) / base;
+    if (s2 < 1) s2 = 1;
+    if (s2 > 4) s2 = 4;
+    return (uint8_t)s2;
+}
+
+// px 字号 -> GLCD textSize (GLCD 基础 6x8, 8px/等级)
+static uint8_t glcdFromPx(int px) {
+    if (px < 8) px = 8;
+    if (px > 24) px = 24;
+    uint8_t ts = (uint8_t)((px + 4) / 8);
+    if (ts < 1) ts = 1;
+    if (ts > 3) ts = 3;
+    return ts;
+}
+
+int16_t utf8Width(const char* s, uint8_t s2) {
     const char* p = s;
     int16_t w = 0;
     while (*p) {
@@ -78,15 +102,15 @@ int16_t utf8Width(const char* s) {
         if (idx >= 0) {
             Glyph g;
             glyphAt(CJKMetrics, (uint16_t)idx, &g);
-            w += g.adv;
+            w += sscale(g.adv, s2);
         } else {
-            w += 12;
+            w += sscale(12, s2);
         }
     }
     return w;
 }
 
-void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint16_t color) {
+void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint16_t color, uint8_t s2) {
     const char* p = s;
     while (*p) {
         uint32_t cp = decodeUtf8(p);
@@ -95,11 +119,29 @@ void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint
             Glyph g;
             glyphAt(CJKMetrics, (uint16_t)idx, &g);
             if (g.w > 0 && g.h > 0) {
-                gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CJKBitmaps[g.off], g.w, g.h, color);
+                if (s2 == 2) {
+                    gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CJKBitmaps[g.off], g.w, g.h,
+                                    color);
+                } else {
+                    // 最近邻缩放绘制 (s2=半单位, 目标: 源*s2/2)
+                    int16_t nw = sscale(g.w, s2);
+                    int16_t nh = sscale(g.h, s2);
+                    int16_t nx = x + sscale(g.xoff, s2);
+                    int16_t ny = baseline + sscale(g.yoff, s2);
+                    uint8_t bw = (uint8_t)((g.w + 7) / 8);
+                    for (int16_t dy = 0; dy < nh; dy++) {
+                        int16_t sy = (int16_t)((dy * g.h) / nh);
+                        const uint8_t* row = &CJKBitmaps[g.off + sy * bw];
+                        for (int16_t dx = 0; dx < nw; dx++) {
+                            int16_t sx = (int16_t)((dx * g.w) / nw);
+                            if (row[sx >> 3] & (0x80 >> (sx & 7))) gfx->writePixel(nx + dx, ny + dy, color);
+                        }
+                    }
+                }
             }
-            x += g.adv;
+            x += sscale(g.adv, s2);
         } else {
-            x += 12;
+            x += sscale(12, s2);
         }
     }
 }
@@ -153,8 +195,26 @@ void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uin
 // 因此旧数字可能比新数字更宽/更高. 若按新数字尺寸清格, 旧数字右侧/底部会残留线条.
 // 解法: 用固定满格清除框. 相邻数字像素间有 >=2px 间隙 (左邻最右到 x+2, 本位最左 x+4,
 // 右邻最左 x+28), 清 x+3..x+26 (24px) 可完全覆盖旧数字而不误伤左右邻居.
-static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, int16_t baseline, uint16_t color) {
-    int16_t totalW = clockWidth(s);
+// s2: 半单位缩放 (2=1x, 1=0.5x, 3=1.5x, 4=2x), 最近邻缩放
+static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, int16_t baseline, uint16_t color,
+                             uint8_t s2) {
+    if (s2 < 1) s2 = 1;
+    if (s2 > 4) s2 = 4;
+    int16_t totalW = 0;
+    {
+        const char* pp = s;
+        while (*pp != '\0') {
+            int idx = clockFind(*pp);
+            if (idx >= 0) {
+                Glyph g;
+                glyphAt(CLKMetrics, (uint16_t)idx, &g);
+                totalW += sscale(g.adv, s2);
+            } else {
+                totalW += sscale(12, s2);
+            }
+            pp++;
+        }
+    }
     int16_t x = (LCD_W - totalW) / 2;
     const char* p = s;
     const char* q = prev;
@@ -166,12 +226,31 @@ static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, 
             glyphAt(CLKMetrics, (uint16_t)idx, &g);
             if (changed && g.w > 0 && g.h > 0) {
                 // 固定满格清除: 覆盖任意前驱数字的完整像素范围, 高度取数字最大 34+余量
-                gfx->fillRect(x + 3, baseline - 36, 24, 36, LCD_BLACK);
-                gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CLKBitmaps[g.off], g.w, g.h, color);
+                int16_t cw = sscale(24, s2);
+                int16_t chh = sscale(36, s2);
+                gfx->fillRect(x + sscale(3, s2), baseline - chh, cw, chh, LCD_BLACK);
+                if (s2 == 2) {
+                    gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CLKBitmaps[g.off], g.w, g.h,
+                                    color);
+                } else {
+                    int16_t nw = sscale(g.w, s2);
+                    int16_t nh = sscale(g.h, s2);
+                    int16_t nx = x + sscale(g.xoff, s2);
+                    int16_t ny = baseline + sscale(g.yoff, s2);
+                    uint8_t bw = (uint8_t)((g.w + 7) / 8);
+                    for (int16_t dy = 0; dy < nh; dy++) {
+                        int16_t sy = (int16_t)((dy * g.h) / nh);
+                        const uint8_t* row = &CLKBitmaps[g.off + sy * bw];
+                        for (int16_t dx = 0; dx < nw; dx++) {
+                            int16_t sx = (int16_t)((dx * g.w) / nw);
+                            if (row[sx >> 3] & (0x80 >> (sx & 7))) gfx->writePixel(nx + dx, ny + dy, color);
+                        }
+                    }
+                }
             }
-            x += g.adv;
+            x += sscale(g.adv, s2);
         } else {
-            x += 12;
+            x += sscale(12, s2);
         }
         p++;
         q++;
@@ -189,9 +268,7 @@ static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 // 服务区: 每行1个服务, 两行/页, 超过则轮播
 static const int16_t SVC_TOP = 172;
 static const int16_t SVC_ROW_H = 26;
-static const int16_t SVC_ADDR_W = 132;  // size2=12px/字符, 16字符=192px, 留余量
 static const int16_t SVC_GAP = 4;
-static const int16_t SVC_ADDR_CHARS = 16;  // size2下巴号列最多字符数(超截)
 
 // 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
 static uint16_t svcDelayColor(int ms) {
@@ -200,15 +277,18 @@ static uint16_t svcDelayColor(int ms) {
     return (uint16_t)0x4C40;
 }
 
-// 截断服务地址(超SVC_ADDR_CHARS字符截)
-static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
+// 截断服务地址(超maxChars字符截)
+static void svcLabel(char* out, size_t outSz, const char* ip, int port, uint8_t maxChars) {
     char buf[48];
     snprintf(buf, sizeof(buf), "%s:%d", ip, port);
     size_t len = strlen(buf);
-    if (len > SVC_ADDR_CHARS) {
-        strncpy(out, buf, SVC_ADDR_CHARS - 2);
-        out[SVC_ADDR_CHARS - 2] = '\0';
-        strncat(out, "..", outSz - (SVC_ADDR_CHARS - 2) - 1);
+    if (maxChars < 4) maxChars = 4;
+    if (len > maxChars) {
+        size_t cut = maxChars - 2;
+        if (cut < 2) cut = 2;
+        strncpy(out, buf, cut);
+        out[cut] = '\0';
+        strncat(out, "..", outSz - cut - 1);
     } else {
         strncpy(out, buf, outSz - 1);
         out[outSz - 1] = '\0';
@@ -217,20 +297,18 @@ static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
 
 // 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
 static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
-    int fs = configManager.fontSize;
-    if (fs < 1) fs = 1;
-    if (fs > 3) fs = 3;
-    int16_t charH = fs * 8;
-    gfx->setTextSize(fs);
+    uint8_t dfs = glcdFromPx(configManager.dateFontSize);
+    uint8_t ifs = glcdFromPx(configManager.ipFontSize);
+    gfx->setTextSize(dfs);
     gfx->setTextColor(0xB0B0B0, LCD_BLACK);
-    gfx->setCursor(4, (12 - charH) + 4);
+    gfx->setCursor(4, IP_Y);
     gfx->print(dateStr ? dateStr : "");
 
     if (ip && ip[0] != '\0') {
-        int16_t iw = (int16_t)(strlen(ip) * 6 * fs / fs);  // recalculate for font size
-        iw = (int16_t)(strlen(ip) * 6 * fs);
+        int16_t pw = (int16_t)(strlen(ip) * 6 * ifs);
+        gfx->setTextSize(ifs);
         gfx->setTextColor(0x608060, LCD_BLACK);
-        gfx->setCursor(LCD_W - 4 - iw, (12 - charH) + 4);
+        gfx->setCursor(LCD_W - 4 - pw, IP_Y);
         gfx->print(ip);
     }
 }
@@ -290,22 +368,28 @@ void render(Arduino_GFX* gfx) {
 
     // 顶栏: 左日期+星期, 右 IP (合并独立区, 任一变化时重绘整区)
     if (topBarChanged) {
-        gfx->fillRect(0, 0, LCD_W, 18, LCD_BLACK);
+        uint8_t dfs = glcdFromPx(configManager.dateFontSize);
+        uint8_t ifs = glcdFromPx(configManager.ipFontSize);
+        int16_t h = dfs * 8 + 4;
+        if (ifs * 8 + 4 > h) h = ifs * 8 + 4;
+        if (h < 18) h = 18;
+        gfx->fillRect(0, 0, LCD_W, h, LCD_BLACK);
         drawTopBar(gfx, dateStr, ipBuf);
     }
 
     // 时钟行 (秒级, 逐数字)
+    uint8_t clkS2 = scale2FromPx(configManager.clockFontSize, 34);
     if (clock.valid) {
         char tbuf[16];
         snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", clock.hour, clock.min, clock.sec);
         if (first || !lastValid) {
-            gfx->fillRect(0, 48, LCD_W, 48, LCD_BLACK);
+            gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkS2) - 2, LCD_W, sscale(36, clkS2) + 2, LCD_BLACK);
         }
-        drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, LCD_WHITE);
+        drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, LCD_WHITE, clkS2);
         strncpy(lastTimeStr, tbuf, sizeof(lastTimeStr) - 1);
         lastTimeStr[sizeof(lastTimeStr) - 1] = '\0';
     } else {
-        gfx->fillRect(0, 48, LCD_W, 48, LCD_BLACK);
+        gfx->fillRect(0, CLOCK_BASELINE - sscale(36, clkS2) - 2, LCD_W, sscale(36, clkS2) + 2, LCD_BLACK);
         static const char* t = "同步时间中...";
         drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, CLOCK_BASELINE, 0x608060);
         lastTimeStr[0] = '\0';
@@ -316,21 +400,25 @@ void render(Arduino_GFX* gfx) {
         char lunarbuf[16];
         LunarCalendar::text(clock.year, clock.mon, clock.day, lunarbuf, sizeof(lunarbuf));
         if (lunarbuf[0] != '\0') {
-            gfx->fillRect(0, 110, LCD_W, 20, LCD_BLACK);
-            int16_t lw = utf8Width(lunarbuf);
-            drawUtf8(gfx, lunarbuf, (LCD_W - lw) / 2, LUNAR_BASELINE, 0xD0D0D0);
+            uint8_t lS2 = scale2FromPx(configManager.lunarFontSize, 16);
+            int16_t lh = sscale(18, lS2) + 2;
+            gfx->fillRect(0, LUNAR_BASELINE - lh, LCD_W, lh, LCD_BLACK);
+            int16_t lw = utf8Width(lunarbuf, lS2);
+            drawUtf8(gfx, lunarbuf, (LCD_W - lw) / 2, LUNAR_BASELINE, 0xD0D0D0, lS2);
         }
     }
 
     // 天气行: 区+天气+气温
     if (weatherChanged) {
-        gfx->fillRect(0, 138, LCD_W, 28, LCD_BLACK);
+        uint8_t wS2 = scale2FromPx(configManager.weatherFontSize, 16);
+        int16_t wh = sscale(20, wS2) + 2;
+        gfx->fillRect(0, WEATHER_BASELINE - wh, LCD_W, wh, LCD_BLACK);
         const char* district = (strlen(city) > 8) ? (city + 8) : city;
-        int16_t dw = utf8Width(district);
-        int16_t ww = utf8Width(wlbuf);
-        int16_t sx = (LCD_W - (dw + 8 + ww)) / 2;
-        drawUtf8(gfx, district, sx, WEATHER_BASELINE, 0x90E090);
-        drawUtf8(gfx, wlbuf, sx + dw + 8, WEATHER_BASELINE, LCD_WHITE);
+        int16_t dw = utf8Width(district, wS2);
+        int16_t ww = utf8Width(wlbuf, wS2);
+        int16_t sx = (LCD_W - (dw + sscale(8, wS2) + ww)) / 2;
+        drawUtf8(gfx, district, sx, WEATHER_BASELINE, 0x90E090, wS2);
+        drawUtf8(gfx, wlbuf, sx + dw + sscale(8, wS2), WEATHER_BASELINE, LCD_WHITE, wS2);
     }
 
     // 服务行 (单列定宽: 状态点 + 定宽地址 + 空6px + 延迟ms; 两行/页, 每10秒轮播)
@@ -354,33 +442,32 @@ void render(Arduino_GFX* gfx) {
                 static const char* t = "未配置监控服务";
                 drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, SVC_TOP + 20, 0x606060);
             } else {
+                uint8_t svcFs = glcdFromPx(configManager.serviceFontSize);
+                int16_t addrW = svcFs * 96;   // size1=96px, size2=192px, size3=288px
                 int pageStart = svcPage * 2;
                 int rowsOnPage = (n - pageStart >= 2) ? 2 : (n - pageStart);
                 for (int r = 0; r < rowsOnPage; r++) {
                     int i = pageStart + r;
                     if (i >= n || i >= 8) break;
                     int16_t x = 8;
-                    int fs = configManager.fontSize;
-                    if (fs < 1) fs = 1;
-                    if (fs > 3) fs = 3;
-                    int16_t charW = fs * 6;
-                    int16_t addrW = fs * 96;   // size1=96px, size2=192px, size3=288px
-                    int16_t y = SVC_TOP + r * SVC_ROW_H + (4 - fs) * 6 + 16;  // size↑则y↓
+                    int16_t y = SVC_TOP + r * SVC_ROW_H + (4 - svcFs) * 6 + 16;  // size↑则y↓
                     uint16_t dotColor = svcs[i].up ? LCD_GREEN : LCD_RED;
                     gfx->fillCircle(x + 3, y - 5, 3, dotColor);
                     char lbl[16];
-                    svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port);
-                    gfx->setTextSize(fs);
+                    uint8_t maxChars = (uint8_t)(addrW / (6 * svcFs));
+                    if (maxChars > 16) maxChars = 16;
+                    svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port, maxChars);
+                    gfx->setTextSize(svcFs);
                     gfx->setTextColor(0xD0D0D0, LCD_BLACK);
                     gfx->setCursor(x + 10, y);
                     gfx->print(lbl);
                     if (svcs[i].up) {
-                        gfx->setTextSize(fs);
+                        gfx->setTextSize(svcFs);
                         gfx->setTextColor(svcDelayColor(svcs[i].latency_ms), LCD_BLACK);
                         gfx->setCursor(x + addrW + SVC_GAP, y);
                         gfx->printf("%dms", svcs[i].latency_ms);
                     } else {
-                        gfx->setTextSize(fs);
+                        gfx->setTextSize(svcFs);
                         gfx->setTextColor(0xF08080, LCD_BLACK);
                         gfx->setCursor(x + addrW + SVC_GAP, y);
                         gfx->print("离线");

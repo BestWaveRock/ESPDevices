@@ -77,7 +77,13 @@ class ConfigManager {
     int weather_min = 15;                        // 天气刷新(分钟)
     int service_sec = 10;                        // 服务探测(秒)
     int tz_offset = 8;                           // 时区(小时)
-    int fontSize = 1;                            // GLCD字号: 1=小号, 2=中号, 3=大号
+    // 各区域独立字号(px), 重启生效
+    int ipFontSize = 8;                          // 顶栏IP字号(px)
+    int dateFontSize = 8;                        // 顶栏日期字号(px)
+    int clockFontSize = 34;                      // 时钟字号(px, CLK基础34px)
+    int lunarFontSize = 16;                      // 农历字号(px, CJK基础16px)
+    int weatherFontSize = 18;                    // 天气字号(px, CJK基础16px)
+    int serviceFontSize = 8;                     // 服务监测字号(px, GLCD基础8px)
 
     const char* getCity() const { return city.c_str(); }
     const char* getServices() const { return services.c_str(); }

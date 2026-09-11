@@ -77,7 +77,12 @@ auto ConfigManager::load() -> bool {
     this->weather_min = doc["weather_min"] | weather_min;
     this->service_sec = doc["service_sec"] | service_sec;
     this->tz_offset = doc["tz_offset"] | tz_offset;
-    this->fontSize = doc["fontSize"] | fontSize;
+    this->ipFontSize = doc["ipFontSize"] | ipFontSize;
+    this->dateFontSize = doc["dateFontSize"] | dateFontSize;
+    this->clockFontSize = doc["clockFontSize"] | clockFontSize;
+    this->lunarFontSize = doc["lunarFontSize"] | lunarFontSize;
+    this->weatherFontSize = doc["weatherFontSize"] | weatherFontSize;
+    this->serviceFontSize = doc["serviceFontSize"] | serviceFontSize;
 
     String nvs_ssid = secure.get("wifi_ssid", "");
     String nvs_password = secure.get("wifi_password", "");
@@ -221,7 +226,12 @@ auto ConfigManager::save() -> bool {
     doc["weather_min"] = weather_min;
     doc["service_sec"] = service_sec;
     doc["tz_offset"] = tz_offset;
-    doc["fontSize"] = fontSize;
+    doc["ipFontSize"] = ipFontSize;
+    doc["dateFontSize"] = dateFontSize;
+    doc["clockFontSize"] = clockFontSize;
+    doc["lunarFontSize"] = lunarFontSize;
+    doc["weatherFontSize"] = weatherFontSize;
+    doc["serviceFontSize"] = serviceFontSize;
 
     if (serializeJson(doc, file) == 0) {
         Logger::error("Failed to write config file", "ConfigManager");

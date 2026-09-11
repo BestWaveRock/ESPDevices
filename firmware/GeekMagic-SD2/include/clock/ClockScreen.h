@@ -24,12 +24,12 @@
 #include "display/DisplayManager.h"  // Arduino_GFX + LCD_W/LCD_H + colors
 
 namespace ClockScreen {
-    // 用 CJK 字体绘制 UTF-8 字符串 (y 为基线)
-    void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint16_t color);
+    // 用 CJK 字体绘制 UTF-8 字符串 (y 为基线), s2=半单位缩放(2=1x, 1=0.5x, 3=1.5x, 4=2x)
+    void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint16_t color, uint8_t s2 = 2);
     // 用时钟数字字体绘制 (y 为基线)
     void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint16_t color);
-    // 测量 CJK 字符串宽度
-    int16_t utf8Width(const char* s);
+    // 测量 CJK 字符串宽度 (s2=半单位缩放)
+    int16_t utf8Width(const char* s, uint8_t s2 = 2);
     int16_t clockWidth(const char* s);
     // 渲染主屏幕
     void render(Arduino_GFX* gfx);

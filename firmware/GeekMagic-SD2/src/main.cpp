@@ -201,12 +201,12 @@ void setup() {
                 "<label>Weather interval (minutes)</label><input name='weather_min' type='number' value='" + String(configManager.weather_min) + "'>"
                 "<label>Service check interval (seconds)</label><input name='service_sec' type='number' value='" + String(configManager.service_sec) + "'>"
                 "<label>Timezone offset (hours)</label><input name='tz_offset' type='number' value='" + String(configManager.tz_offset) + "'>"
-                "<label>Font size (1=small 2=medium 3=large)</label>"
-                "<select name='fontSize'>"
-                "<option value='1'" + (configManager.fontSize == 1 ? " selected" : "") + ">1 - Small</option>"
-                "<option value='2'" + (configManager.fontSize == 2 ? " selected" : "") + ">2 - Medium</option>"
-                "<option value='3'" + (configManager.fontSize == 3 ? " selected" : "") + ">3 - Large</option>"
-                "</select>"
+                "<label>IP font size (px, 8-24)</label><input name='ipFontSize' type='number' min='8' max='24' value='" + String(configManager.ipFontSize) + "'>"
+                "<label>Date font size (px, 8-24)</label><input name='dateFontSize' type='number' min='8' max='24' value='" + String(configManager.dateFontSize) + "'>"
+                "<label>Clock font size (px, 17-68)</label><input name='clockFontSize' type='number' min='17' max='68' value='" + String(configManager.clockFontSize) + "'>"
+                "<label>Lunar font size (px, 16-48)</label><input name='lunarFontSize' type='number' min='16' max='48' value='" + String(configManager.lunarFontSize) + "'>"
+                "<label>Weather font size (px, 16-48)</label><input name='weatherFontSize' type='number' min='16' max='48' value='" + String(configManager.weatherFontSize) + "'>"
+                "<label>Service font size (px, 8-24)</label><input name='serviceFontSize' type='number' min='8' max='24' value='" + String(configManager.serviceFontSize) + "'>"
                 "<button type='submit'>Save &amp; Reboot</button>"
                 "</form></body></html>";
             webserver->raw().send(200, "text/html; charset=UTF-8", html.c_str());
@@ -224,10 +224,30 @@ void setup() {
             configManager.weather_min = server.arg("weather_min").toInt();
             configManager.service_sec = server.arg("service_sec").toInt();
             configManager.tz_offset = server.arg("tz_offset").toInt();
-            configManager.fontSize = server.arg("fontSize").toInt();
-            if (configManager.fontSize < 1 || configManager.fontSize > 3) configManager.fontSize = 1;
+            configManager.ipFontSize = server.arg("ipFontSize").toInt();
+            if (configManager.ipFontSize < 8 || configManager.ipFontSize > 24) configManager.ipFontSize = 8;
+            configManager.dateFontSize = server.arg("dateFontSize").toInt();
+            if (configManager.dateFontSize < 8 || configManager.dateFontSize > 24) configManager.dateFontSize = 8;
+            configManager.clockFontSize = server.arg("clockFontSize").toInt();
+            if (configManager.clockFontSize < 17 || configManager.clockFontSize > 68) configManager.clockFontSize = 34;
+            configManager.lunarFontSize = server.arg("lunarFontSize").toInt();
+            if (configManager.lunarFontSize < 16 || configManager.lunarFontSize > 48) configManager.lunarFontSize = 16;
+            configManager.weatherFontSize = server.arg("weatherFontSize").toInt();
+            if (configManager.weatherFontSize < 16 || configManager.weatherFontSize > 48) configManager.weatherFontSize = 18;
+            configManager.serviceFontSize = server.arg("serviceFontSize").toInt();
+            if (configManager.serviceFontSize < 8 || configManager.serviceFontSize > 24) configManager.serviceFontSize = 8;
             configManager.save();
-            server.send(200, "text/plain", "Saved, rebooting...");
+            server.send(200, "text/html; charset=UTF-8",
+                        "<html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/config'>"
+                        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                        "<style>body{font-family:sans-serif;background:#111;color:#fff;display:flex;align-items:center;"
+                        "justify-content:center;height:100vh;margin:0;flex-direction:column}"
+                        "h1{font-size:1.2rem;margin:0 0 1rem}.cd{font-size:3rem;margin:0 1rem;color:#4ade80}</style>"
+                        "</head><body><h1>配置已保存，设备重启中...</h1>"
+                        "<p><span class='cd' id='cd'>3</span>秒后自动刷新</p>"
+                        "<script>var n=3,el=document.getElementById('cd');setInterval(function(){n--;"
+                        "if(n>0){el.textContent=n}else{location.href='/config'}},1000);</script>"
+                        "</body></html>");
             delay(500);
             ESP.restart();
         });

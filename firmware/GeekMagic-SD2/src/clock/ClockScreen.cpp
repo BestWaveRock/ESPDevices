@@ -154,8 +154,10 @@ void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uin
 // 各分区独立行, 只在自身内容变化时清+重绘对应行, 整屏绝不再整区清 -> 无黑闪
 static const int16_t IP_Y = 6;
 static const int16_t CLOCK_BASELINE = 90;
-static const int16_t DATE_BASELINE = 122;
+static const int16_t DATE_TOP = 98;      // 日期+星期 (GLCD 小字, y 为顶部)
+static const int16_t LUNAR_BASELINE = 126;  // 农历 (CJK 大字, y 为基线)
 static const int16_t WEATHER_BASELINE = 160;
+static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
 // 顶部用内置 GLCD 字体展示本机 IP (ASCII, size1 每字符约 6px)
 static void drawIp(Arduino_GFX* gfx, const char* ip) {
@@ -167,7 +169,11 @@ static void drawIp(Arduino_GFX* gfx, const char* ip) {
     gfx->print(ip);
 }
 
-// 秒级时钟: 逐数字小格子刷新, 只重绘变化的数字, 数字间有间隙互不干扰, 无整行黑闪
+// 秒级时钟: 逐数字小格子刷新, 只重绘变化的数字, 无整行黑闪.
+// 时钟各数字 advance 固定 24px, 但字形像素范围不同 (xoff 4..9, w 9..22, h 32..34),
+// 因此旧数字可能比新数字更宽/更高. 若按新数字尺寸清格, 旧数字右侧/底部会残留线条.
+// 解法: 用固定满格清除框. 相邻数字像素间有 >=2px 间隙 (左邻最右到 x+2, 本位最左 x+4,
+// 右邻最左 x+28), 清 x+3..x+26 (24px) 可完全覆盖旧数字而不误伤左右邻居.
 static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, int16_t baseline, uint16_t color) {
     int16_t totalW = clockWidth(s);
     int16_t x = (LCD_W - totalW) / 2;
@@ -180,7 +186,8 @@ static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, 
             Glyph g;
             glyphAt(CLKMetrics, (uint16_t)idx, &g);
             if (changed && g.w > 0 && g.h > 0) {
-                gfx->fillRect(x, baseline + g.yoff, g.adv, g.h, LCD_BLACK);
+                // 固定满格清除: 覆盖任意前驱数字的完整像素范围, 高度取数字最大 34+余量
+                gfx->fillRect(x + 3, baseline - 36, 24, 36, LCD_BLACK);
                 gfx->drawBitmap((int16_t)(x + g.xoff), (int16_t)(baseline + g.yoff), &CLKBitmaps[g.off], g.w, g.h, color);
             }
             x += g.adv;
@@ -268,20 +275,27 @@ void render(Arduino_GFX* gfx) {
         lastTimeStr[0] = '\0';
     }
 
-    // 日期行 (独立, 不被时钟重绘影响)
+    // 日期+星期行 (独立, GLCD 小字, 英文星期避免字体缺"周")
     if (dateChanged && clock.valid) {
-        static const char* WK[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+        char line[24];
+        snprintf(line, sizeof(line), "%04d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK_EN[clock.weekday]);
+        gfx->fillRect(0, DATE_TOP - 1, LCD_W, 12, LCD_BLACK);
+        int16_t lw = (int16_t)(strlen(line) * 6);
+        gfx->setTextSize(1);
+        gfx->setTextColor(0xC0C0C0, LCD_BLACK);
+        gfx->setCursor((LCD_W - lw) / 2, DATE_TOP);
+        gfx->print(line);
+    }
+
+    // 农历行 (独立, CJK 大字)
+    if (dateChanged && clock.valid) {
         char lunarbuf[16];
         LunarCalendar::text(clock.year, clock.mon, clock.day, lunarbuf, sizeof(lunarbuf));
-        char line[64];
         if (lunarbuf[0] != '\0') {
-            snprintf(line, sizeof(line), "%d-%02d-%02d %s %s", clock.year, clock.mon, clock.day, WK[clock.weekday], lunarbuf);
-        } else {
-            snprintf(line, sizeof(line), "%d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK[clock.weekday]);
+            gfx->fillRect(0, 110, LCD_W, 20, LCD_BLACK);
+            int16_t lw = utf8Width(lunarbuf);
+            drawUtf8(gfx, lunarbuf, (LCD_W - lw) / 2, LUNAR_BASELINE, 0xD0D0D0);
         }
-        gfx->fillRect(0, 100, LCD_W, 26, LCD_BLACK);
-        int16_t lw = utf8Width(line);
-        drawUtf8(gfx, line, (LCD_W - lw) / 2, DATE_BASELINE, 0xC0C0C0);
     }
 
     // 天气行 (独立)

@@ -72,6 +72,7 @@ const char* text(int year, int month, int day, char* buf, int bufsize) {
     int off = 0;
     if (r.leap) off += snprintf(buf + off, bufsize - off, "闰");
     off += snprintf(buf + off, bufsize - off, "%s", monthText(r.month));
+    off += snprintf(buf + off, bufsize - off, "%s", "月");
     snprintf(buf + off, bufsize - off, "%s", dayText(r.day));
     return buf;
 }

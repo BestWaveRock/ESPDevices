@@ -77,6 +77,7 @@ auto ConfigManager::load() -> bool {
     this->weather_min = doc["weather_min"] | weather_min;
     this->service_sec = doc["service_sec"] | service_sec;
     this->tz_offset = doc["tz_offset"] | tz_offset;
+    this->fontSize = doc["fontSize"] | fontSize;
 
     String nvs_ssid = secure.get("wifi_ssid", "");
     String nvs_password = secure.get("wifi_password", "");
@@ -220,6 +221,7 @@ auto ConfigManager::save() -> bool {
     doc["weather_min"] = weather_min;
     doc["service_sec"] = service_sec;
     doc["tz_offset"] = tz_offset;
+    doc["fontSize"] = fontSize;
 
     if (serializeJson(doc, file) == 0) {
         Logger::error("Failed to write config file", "ConfigManager");

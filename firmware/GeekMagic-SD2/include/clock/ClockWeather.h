@@ -67,6 +67,9 @@ namespace ClockWeather {
     // 强制立即刷新天气(忽略间隔)
     void forceWeather();
 
+    // 下次允许拉取天气的 millis 时刻 (0 = 尚未初始化/即刻拉取)
+    unsigned long nextWeatherMs();
+
     // 天气/服务描述缓存
     const char* weatherDesc();
 

@@ -27,6 +27,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <pgmspace.h>
+#include <math.h>
 #include <ESP8266WiFi.h>
 
 extern ConfigManager configManager;
@@ -302,6 +303,30 @@ static void drawGlcd(Arduino_GFX* gfx, const char* s, int16_t x, int16_t y, uint
     }
 }
 
+// 天气刷新倒计时饼图: 纯圆填充区, 直径=行高, 从 12 点顺时针绘制剩余进度
+// frac=1.0 整圆 (刚刷新), frac=0.0 空 (即将刷新). 用多边形小弧块近似扇形.
+static void drawPie(Arduino_GFX* gfx, int16_t cx, int16_t cy, int16_t r, float frac, uint16_t color) {
+    if (r <= 0) return;
+    if (frac >= 1.0f) {
+        gfx->fillCircle(cx, cy, r, color);
+        return;
+    }
+    if (frac <= 0.0f) return;
+    const int steps = 16;                       // 整圆分段数(每段 22.5°)
+    float end = frac * (float)M_PI * 2.0f;
+    int n = (int)(frac * steps) + 1;
+    float prevX = cx;
+    float prevY = cy - r;                       // 12 点方向
+    for (int i = 1; i <= n; i++) {
+        float a = end * (float)i / (float)n;
+        float nx = cx - r * sinf(a);            // 逆时针: 从12点向左扫 (视觉上顺时针)
+        float ny = cy - r * cosf(a);
+        gfx->fillTriangle(cx, cy, (int16_t)prevX, (int16_t)prevY, (int16_t)nx, (int16_t)ny, color);
+        prevX = nx;
+        prevY = ny;
+    }
+}
+
 // 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
 static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
     uint16_t dfs = scaleFromPx(configManager.dateFontSize, 8);
@@ -329,6 +354,7 @@ void render(Arduino_GFX* gfx) {
     static int lastLatMs[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     static unsigned long svcPageTs = 0;
     static int svcPage = 0;
+    static int lastPiePct = -1;
 
     // ---- 本机 IP ----
     char ipBuf[16];
@@ -367,14 +393,16 @@ void render(Arduino_GFX* gfx) {
         gfx->fillScreen(LCD_BLACK);
     }
 
+    // 日期行高度 (顶栏与天气饼图共用)
+    uint16_t dfs = scaleFromPx(configManager.dateFontSize, 8);
+    uint16_t ifs = scaleFromPx(configManager.ipFontSize, 8);
+    int16_t dateBarH = sscale(8, dfs) + 4;
+    if (sscale(8, ifs) + 4 > dateBarH) dateBarH = sscale(8, ifs) + 4;
+    if (dateBarH < 18) dateBarH = 18;
+
     // 顶栏: 左日期+星期, 右 IP (合并独立区, 任一变化时重绘整区)
     if (topBarChanged) {
-        uint16_t dfs = scaleFromPx(configManager.dateFontSize, 8);
-        uint16_t ifs = scaleFromPx(configManager.ipFontSize, 8);
-        int16_t h = sscale(8, dfs) + 4;
-        if (sscale(8, ifs) + 4 > h) h = sscale(8, ifs) + 4;
-        if (h < 18) h = 18;
-        gfx->fillRect(0, 0, LCD_W, h, LCD_BLACK);
+        gfx->fillRect(0, 0, LCD_W, dateBarH, LCD_BLACK);
         drawTopBar(gfx, dateStr, ipBuf);
     }
 
@@ -410,17 +438,43 @@ void render(Arduino_GFX* gfx) {
         }
     }
 
-    // 天气行: 区+天气+气温
+    // 天气行: 区+天气+气温 (文本组居中), 右侧刷新倒计时饼图 (直径=行高)
+    uint16_t wScale = scaleFromPx(configManager.weatherFontSize, 16);
+    int16_t wh = sscale(20, wScale) + 2;
+    const char* district = city;  // city 完整显示, 不再截取
+    int16_t dw = utf8Width(district, wScale);
+    int16_t ww = utf8Width(wlbuf, wScale);
+    int16_t tw = dw + sscale(8, wScale) + ww;
+    int16_t pieD = dateBarH;                 // 饼图直径 = 日期行高 (上下对齐)
+    int16_t gap = 6;
+    int16_t x0w = (LCD_W - (tw + gap + pieD)) / 2;
     if (weatherChanged) {
-        uint16_t wScale = scaleFromPx(configManager.weatherFontSize, 16);
-        int16_t wh = sscale(20, wScale) + 2;
         gfx->fillRect(0, WEATHER_BASELINE - wh, LCD_W, wh, LCD_BLACK);
-        const char* district = city;  // city 完整显示, 不再截取
-        int16_t dw = utf8Width(district, wScale);
-        int16_t ww = utf8Width(wlbuf, wScale);
-        int16_t sx = (LCD_W - (dw + sscale(8, wScale) + ww)) / 2;
-        drawUtf8(gfx, district, sx, WEATHER_BASELINE, 0x90E090, wScale);
-        drawUtf8(gfx, wlbuf, sx + dw + sscale(8, wScale), WEATHER_BASELINE, LCD_WHITE, wScale);
+        drawUtf8(gfx, district, x0w, WEATHER_BASELINE, 0x90E090, wScale);
+        drawUtf8(gfx, wlbuf, x0w + dw + sscale(8, wScale), WEATHER_BASELINE, LCD_WHITE, wScale);
+    }
+    // 饼图: 剩余进度 (从满到空). 刚拉取完 frac≈1 (满圆), 随时间递减到 0.
+    {
+        unsigned long nowW = millis();
+        unsigned long wNext = ClockWeather::nextWeatherMs();
+        unsigned long wInt = (unsigned long)configManager.weather_min * 60000UL;
+        float frac = 0.0f;
+        if (wInt > 0) {
+            long rem = (long)(wNext - nowW);   // 环形差; 未知/过期 -> <=0
+            if (rem > 0) {
+                frac = (float)rem / (float)wInt;
+                if (frac > 1.0f) frac = 1.0f;
+            }
+        }
+        int pct = (int)(frac * 1000.0f);
+        if (pct != lastPiePct || weatherChanged) {
+            lastPiePct = pct;
+            int16_t pieCx = x0w + tw + gap + pieD / 2;
+            int16_t pieCy = WEATHER_BASELINE - wh / 2;
+            int16_t r = pieD / 2;
+            gfx->fillRect(pieCx - r - 1, pieCy - r - 1, pieD + 2, pieD + 2, LCD_BLACK);
+            drawPie(gfx, pieCx, pieCy, r, frac, 0x3090D0);
+        }
     }
 
     // 服务行 (单列定宽: 状态点 + 定宽地址 + 空6px + 延迟ms; 两行/页, 每10秒轮播)

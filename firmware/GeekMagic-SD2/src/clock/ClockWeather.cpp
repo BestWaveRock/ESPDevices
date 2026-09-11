@@ -229,4 +229,8 @@ void forceWeather() {
     if (wifiUp()) fetchWeather();
 }
 
+unsigned long nextWeatherMs() {
+    return s_weatherNext;
+}
+
 }  // namespace ClockWeather

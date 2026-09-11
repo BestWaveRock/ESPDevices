@@ -77,7 +77,6 @@ class ConfigManager {
     int weather_min = 15;                        // 天气刷新(分钟)
     int service_sec = 10;                        // 服务探测(秒)
     int tz_offset = 8;                           // 时区(小时)
-    int fontSize = 1;                            // GLCD字号: 1=小号, 2=中号, 3=大号
 
     const char* getCity() const { return city.c_str(); }
     const char* getServices() const { return services.c_str(); }

@@ -189,9 +189,9 @@ static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 // 服务区: 每行1个服务, 两行/页, 超过则轮播
 static const int16_t SVC_TOP = 172;
 static const int16_t SVC_ROW_H = 26;
-static const int16_t SVC_ADDR_W = 132;  // size2=12px/字符, 16字符=192px, 留余量
-static const int16_t SVC_GAP = 4;
-static const int16_t SVC_ADDR_CHARS = 16;  // size2下巴号列最多字符数(超截)
+static const int16_t SVC_ADDR_W = 120;
+static const int16_t SVC_GAP = 6;
+static const int16_t SVC_ADDR_CHARS = 20;  // 地址列最多字符数(超截)
 
 // 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
 static uint16_t svcDelayColor(int ms) {
@@ -217,20 +217,16 @@ static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
 
 // 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
 static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
-    int fs = configManager.fontSize;
-    if (fs < 1) fs = 1;
-    if (fs > 3) fs = 3;
-    int16_t charH = fs * 8;
-    gfx->setTextSize(fs);
+    gfx->setTextSize(1);
     gfx->setTextColor(0xB0B0B0, LCD_BLACK);
-    gfx->setCursor(4, (12 - charH) + 4);
+    int16_t dw = dateStr ? (int16_t)(strlen(dateStr) * 6) : 0;
+    gfx->setCursor(4, IP_Y);
     gfx->print(dateStr ? dateStr : "");
 
     if (ip && ip[0] != '\0') {
-        int16_t iw = (int16_t)(strlen(ip) * 6 * fs / fs);  // recalculate for font size
-        iw = (int16_t)(strlen(ip) * 6 * fs);
+        int16_t iw = (int16_t)(strlen(ip) * 6);
         gfx->setTextColor(0x608060, LCD_BLACK);
-        gfx->setCursor(LCD_W - 4 - iw, (12 - charH) + 4);
+        gfx->setCursor(LCD_W - 4 - iw, IP_Y);
         gfx->print(ip);
     }
 }
@@ -360,29 +356,24 @@ void render(Arduino_GFX* gfx) {
                     int i = pageStart + r;
                     if (i >= n || i >= 8) break;
                     int16_t x = 8;
-                    int fs = configManager.fontSize;
-                    if (fs < 1) fs = 1;
-                    if (fs > 3) fs = 3;
-                    int16_t charW = fs * 6;
-                    int16_t addrW = fs * 96;   // size1=96px, size2=192px, size3=288px
-                    int16_t y = SVC_TOP + r * SVC_ROW_H + (4 - fs) * 6 + 16;  // size↑则y↓
+                    int16_t y = SVC_TOP + r * SVC_ROW_H + 16;
                     uint16_t dotColor = svcs[i].up ? LCD_GREEN : LCD_RED;
                     gfx->fillCircle(x + 3, y - 5, 3, dotColor);
                     char lbl[16];
                     svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port);
-                    gfx->setTextSize(fs);
+                    gfx->setTextSize(1);
                     gfx->setTextColor(0xD0D0D0, LCD_BLACK);
                     gfx->setCursor(x + 10, y);
                     gfx->print(lbl);
                     if (svcs[i].up) {
-                        gfx->setTextSize(fs);
+                        gfx->setTextSize(1);
                         gfx->setTextColor(svcDelayColor(svcs[i].latency_ms), LCD_BLACK);
-                        gfx->setCursor(x + addrW + SVC_GAP, y);
+                        gfx->setCursor(x + SVC_ADDR_W + SVC_GAP, y);
                         gfx->printf("%dms", svcs[i].latency_ms);
                     } else {
-                        gfx->setTextSize(fs);
+                        gfx->setTextSize(1);
                         gfx->setTextColor(0xF08080, LCD_BLACK);
-                        gfx->setCursor(x + addrW + SVC_GAP, y);
+                        gfx->setCursor(x + SVC_ADDR_W + SVC_GAP, y);
                         gfx->print("离线");
                     }
                 }

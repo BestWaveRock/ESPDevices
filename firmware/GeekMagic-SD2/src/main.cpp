@@ -201,12 +201,6 @@ void setup() {
                 "<label>Weather interval (minutes)</label><input name='weather_min' type='number' value='" + String(configManager.weather_min) + "'>"
                 "<label>Service check interval (seconds)</label><input name='service_sec' type='number' value='" + String(configManager.service_sec) + "'>"
                 "<label>Timezone offset (hours)</label><input name='tz_offset' type='number' value='" + String(configManager.tz_offset) + "'>"
-                "<label>Font size (1=small 2=medium 3=large)</label>"
-                "<select name='fontSize'>"
-                "<option value='1'" + (configManager.fontSize == 1 ? " selected" : "") + ">1 - Small</option>"
-                "<option value='2'" + (configManager.fontSize == 2 ? " selected" : "") + ">2 - Medium</option>"
-                "<option value='3'" + (configManager.fontSize == 3 ? " selected" : "") + ">3 - Large</option>"
-                "</select>"
                 "<button type='submit'>Save &amp; Reboot</button>"
                 "</form></body></html>";
             webserver->raw().send(200, "text/html; charset=UTF-8", html.c_str());
@@ -224,8 +218,6 @@ void setup() {
             configManager.weather_min = server.arg("weather_min").toInt();
             configManager.service_sec = server.arg("service_sec").toInt();
             configManager.tz_offset = server.arg("tz_offset").toInt();
-            configManager.fontSize = server.arg("fontSize").toInt();
-            if (configManager.fontSize < 1 || configManager.fontSize > 3) configManager.fontSize = 1;
             configManager.save();
             server.send(200, "text/plain", "Saved, rebooting...");
             delay(500);

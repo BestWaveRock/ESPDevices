@@ -37,7 +37,8 @@ namespace ClockScreen {
 // param (no struct-return) so the compiler cannot substitute a direct flash load.
 static void glyphAt(const Glyph* arr, uint16_t i, Glyph* out) {
     const uint8_t* b = (const uint8_t*)arr + (unsigned)i * sizeof(Glyph);
-    out->off = (uint16_t)((pgm_read_byte(b + 0) << 8) | pgm_read_byte(b + 1));
+    // off 是 uint16_t, ESP8266 小端: byte0=低字节, byte1=高字节
+    out->off = (uint16_t)(pgm_read_byte(b + 0) | (pgm_read_byte(b + 1) << 8));
     out->w = pgm_read_byte(b + 2);
     out->h = pgm_read_byte(b + 3);
     out->xoff = (int8_t)pgm_read_byte(b + 4);
@@ -149,49 +150,85 @@ void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uin
     }
 }
 
+// 增量刷新: 只在内容变化时重绘对应区域, 避免每秒整屏黑闪
+static const uint16_t SEC_CLOCK_BG = 0x0A1A;
+static const uint16_t SEC_WEATHER_BG = 0x0E22;
+static const uint16_t SEC_SERVICE_BG = 0x0A1A;
+
 void render(Arduino_GFX* gfx) {
-    gfx->fillScreen(LCD_BLACK);
-
-    // 分区背景
-    gfx->fillRect(0, 0, LCD_W, 130, 0x0A1A);   // 时钟区
-    gfx->fillRect(0, 130, LCD_W, 60, 0x0E22);  // 天气区
-    gfx->fillRect(0, 190, LCD_W, 50, 0x0A1A);  // 服务区
-
     auto clock = ClockWeather::localClock();
 
-    // ===== 大时钟 =====
-    if (clock.valid) {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%02d:%02d", clock.hour, clock.min);
-        int16_t w = clockWidth(buf);
-        drawClock(gfx, buf, (LCD_W - w) / 2, 90, LCD_WHITE);
+    static bool first = true;
+    static int lastH = -1, lastM = -1;
+    static int lastY = -1, lastMo = -1, lastD = -1;
+    static bool lastValid = false;
+    static char lastWeather[32] = "";
+    static char lastCity[32] = "";
+    static int lastSvcCount = -1;
+    static bool lastSvcUp[4] = {false, false, false, false};
 
-        // 日期 + 星期 + 农历
-        static const char* WK[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
-        char lunarbuf[16];
-        LunarCalendar::text(clock.year, clock.mon, clock.day, lunarbuf, sizeof(lunarbuf));
-        char line[64];
-        if (lunarbuf[0] != '\0') {
-            snprintf(line, sizeof(line), "%d-%02d-%02d %s %s", clock.year, clock.mon, clock.day, WK[clock.weekday], lunarbuf);
-        } else {
-            snprintf(line, sizeof(line), "%d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK[clock.weekday]);
-        }
-        int16_t lw = utf8Width(line);
-        drawUtf8(gfx, line, (LCD_W - lw) / 2, 122, 0xC0C0C0);
-    } else {
-        static const char* t = "同步时间中...";
-        drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, 90, 0x608060);
-    }
-    // ===== 天气 =====
+    bool clockChanged = first || (!clock.valid != !lastValid) || (clock.hour != lastH) || (clock.min != lastM);
+    bool dateChanged = clockChanged && (clock.valid && (clock.year != lastY || clock.mon != lastMo || clock.day != lastD));
+
+    char wlbuf[32];
     {
         const ClockWeather::Weather& w = ClockWeather::weather();
-        char wlbuf[32];
         if (w.ok) {
             snprintf(wlbuf, sizeof(wlbuf), "%s %d℃", ClockWeather::codeToText(w.code), (int)w.temp);
         } else {
             snprintf(wlbuf, sizeof(wlbuf), "%s", "天气获取中...");
         }
-        const char* city = configManager.getCity();
+    }
+    const char* city = configManager.getCity();
+    bool weatherChanged = first || (strcmp(wlbuf, lastWeather) != 0) || (strcmp(city, lastCity) != 0);
+
+    int n = 0;
+    const ClockWeather::ServiceStatus* svcs = ClockWeather::services(n);
+    bool svcChanged = false;
+    if (n != lastSvcCount) svcChanged = true;
+    for (int i = 0; i < n && i < 4; i++) {
+        if (svcs[i].up != lastSvcUp[i]) { svcChanged = true; break; }
+    }
+    svcChanged = svcChanged || first;
+
+    if (first) {
+        gfx->fillScreen(LCD_BLACK);
+        gfx->fillRect(0, 0, LCD_W, 130, SEC_CLOCK_BG);
+        gfx->fillRect(0, 130, LCD_W, 60, SEC_WEATHER_BG);
+        gfx->fillRect(0, 190, LCD_W, 50, SEC_SERVICE_BG);
+    }
+
+    if (clockChanged || dateChanged) {
+        gfx->fillRect(0, 0, LCD_W, 130, SEC_CLOCK_BG);
+        if (clock.valid) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%02d:%02d", clock.hour, clock.min);
+            int16_t w = clockWidth(buf);
+            drawClock(gfx, buf, (LCD_W - w) / 2, 90, LCD_WHITE);
+        } else {
+            static const char* t = "同步时间中...";
+            drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, 90, 0x608060);
+        }
+    }
+
+    if (dateChanged) {
+        if (clock.valid) {
+            static const char* WK[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+            char lunarbuf[16];
+            LunarCalendar::text(clock.year, clock.mon, clock.day, lunarbuf, sizeof(lunarbuf));
+            char line[64];
+            if (lunarbuf[0] != '\0') {
+                snprintf(line, sizeof(line), "%d-%02d-%02d %s %s", clock.year, clock.mon, clock.day, WK[clock.weekday], lunarbuf);
+            } else {
+                snprintf(line, sizeof(line), "%d-%02d-%02d %s", clock.year, clock.mon, clock.day, WK[clock.weekday]);
+            }
+            int16_t lw = utf8Width(line);
+            drawUtf8(gfx, line, (LCD_W - lw) / 2, 122, 0xC0C0C0);
+        }
+    }
+
+    if (weatherChanged) {
+        gfx->fillRect(0, 130, LCD_W, 60, SEC_WEATHER_BG);
         int16_t yw = 160;
         int16_t cw = utf8Width(city);
         int16_t ww = utf8Width(wlbuf);
@@ -199,10 +236,9 @@ void render(Arduino_GFX* gfx) {
         drawUtf8(gfx, city, sx, yw, 0x90E090);
         drawUtf8(gfx, wlbuf, sx + cw + 10, yw, LCD_WHITE);
     }
-    // ===== 服务监控 (两列) =====
-    {
-        int n = 0;
-        const ClockWeather::ServiceStatus* svcs = ClockWeather::services(n);
+
+    if (svcChanged) {
+        gfx->fillRect(0, 190, LCD_W, 50, SEC_SERVICE_BG);
         for (int i = 0; i < n && i < 4; i++) {
             int col = i % 2;
             int row = i / 2;
@@ -220,6 +256,22 @@ void render(Arduino_GFX* gfx) {
             drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, 210, 0x606060);
         }
     }
+
+    // 更新跟踪状态
+    lastH = clock.hour;
+    lastM = clock.min;
+    lastY = clock.year;
+    lastMo = clock.mon;
+    lastD = clock.day;
+    lastValid = clock.valid;
+    strncpy(lastWeather, wlbuf, sizeof(lastWeather) - 1);
+    lastWeather[sizeof(lastWeather) - 1] = '\0';
+    strncpy(lastCity, city, sizeof(lastCity) - 1);
+    lastCity[sizeof(lastCity) - 1] = '\0';
+    lastSvcCount = n;
+    for (int i = 0; i < 4; i++) lastSvcUp[i] = (i < n) ? svcs[i].up : false;
+    first = false;
+
     yield();
 }
 

@@ -103,6 +103,31 @@ static void glyphAt(const Glyph* arr, uint16_t i, Glyph* out) {
 - RAM：54.4%（44552 / 81920），运行期 free heap 稳定 ~26KB
 - 数据符号落在 `0x4025fxxx`/`0x40260xxx`（flash），运行无 `Exception`
 
+## 字体乱码：字节序坑（只有 `0` 正常）
+
+`Glyph.off` 是 `uint16_t`，从 flash 逐字节读。最初写成 **大端**：
+
+```c
+out->off = (pgm_read_byte(b+0) << 8) | pgm_read_byte(b+1);  // 错
+```
+
+但 ESP8266（LX106）是 **小端**：`b[0]` 是低字节、`b[1]` 是高字节。
+结果所有字形的 `off` 偏移被交换——只有 `off=0`（两字节都是 0，`'0'`）正确，
+其余字符位图指针全错 → 屏幕乱码。
+
+修正为小端：
+
+```c
+out->off = (uint16_t)(pgm_read_byte(b+0) | (pgm_read_byte(b+1) << 8));  // 对
+```
+
+## 闪屏：每秒整屏重绘
+
+`render()` 首句 `fillScreen(BLACK)`，而 DisplayManager 每秒调用一次 → 每秒整屏黑闪。
+
+改为 **增量刷新**：记录上一帧的 时钟/日期/天气/服务 状态，仅当某分区内容变化时才
+重绘该分区（重绘前只清该分区背景色）。首帧铺满整屏，之后只刷变化区 → 无闪屏。
+
 ## 教训
 
 1. ESP8266 上 **`PROGMEM` 不可信**（按变量命名 section，破坏代码/字面量池布局）。
@@ -110,4 +135,6 @@ static void glyphAt(const Glyph* arr, uint16_t i, Glyph* out) {
 3. flash 数据 **必须** `pgm_read_*` 读，禁止裸下标；LX106 不支持 flash 非对齐 8/16 位读。
 4. 避免函数返回含 `uint16`/`uint32` 字段的结构体，防止编译器优化出裸 load；用输出参数。
 5. 烧录前用 `objdump` 校验关键函数无 `l16ui`/`l8ui`。
-6. 开源前 **移除硬编码的个人 WiFi 凭据**（本次已从 `main.cpp` 移除，改为空占位 + 为空时跳过内置连接）。
+6. 逐字节拼 `uint16_t` 时 **注意小端**：`b[0]` 低字节、`b[1]` 高字节。
+7. 周期性刷新 UI 用 **增量重绘**（只刷变化区），不要每秒 `fillScreen` 整屏。
+8. 开源前 **移除硬编码的个人 WiFi 凭据**（本次已从 `main.cpp` 移除，改为空占位 + 为空时跳过内置连接）。

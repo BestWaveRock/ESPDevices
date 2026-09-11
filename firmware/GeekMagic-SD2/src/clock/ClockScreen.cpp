@@ -294,12 +294,12 @@ void render(Arduino_GFX* gfx) {
         }
     }
 
-    // 天气行: 区+天气+气温 (去城市全名, 只显示区名, 通常是'两江新区'这样的小范围)
+    // 天气行: 区+天气+气温 (去城市全名, 截断'·'后的区名)
     if (weatherChanged) {
         gfx->fillRect(0, 138, LCD_W, 28, LCD_BLACK);
         const char* district = city;
-        const char* dot = strchr(city, '\xE7\x82\xB9');  // '·' UTF-8: E7 82 B9
-        if (dot) district = dot + 3;  // skip '·' (3-byte UTF-8)
+        const char* dot = strchr(city, '\xC2\xB7');  // '·' U+00B7 UTF-8: C2B7
+        if (dot) district = dot + 2;  // skip 2-byte '·'
         if (district[0] == '\0') district = city;
         int16_t dw = utf8Width(district);
         int16_t ww = utf8Width(wlbuf);
@@ -323,9 +323,7 @@ void render(Arduino_GFX* gfx) {
             if (svcs[i].up) {
                 char lbuf[12];
                 snprintf(lbuf, sizeof(lbuf), "%dms", svcs[i].latency_ms);
-                drawUtf8(gfx, "在线", x + 8 + ipw + 4, y, 0x90E090);
-                int16_t lw = utf8Width(lbuf);
-                drawUtf8(gfx, lbuf, x + 8 + ipw + 4 + utf8Width("在线") + 4, y, 0x90D090);
+                drawUtf8(gfx, lbuf, x + 8 + ipw + 4, y, 0x90D090);
             } else {
                 drawUtf8(gfx, "离线", x + 8 + ipw + 4, y, 0xF08080);
             }

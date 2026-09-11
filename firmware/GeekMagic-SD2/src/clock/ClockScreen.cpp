@@ -267,16 +267,18 @@ static const int16_t SVC_ROW_H = 26;
 static const int16_t SVC_GAP = 4;
 static const int16_t SVC_TOP = (SVC_BAND_TOP + SVC_BAND_BOTTOM) / 2 - SVC_ROW_H;
 
-// 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
+// 延迟ms: <30绿, 30-99黄, 100-299橙, >=300深橙(红)
 static uint16_t svcDelayColor(int ms) {
     if (ms < 30) return (uint16_t)0x0A00;
-    if (ms < 100) return (uint16_t)0x6540;
-    return (uint16_t)0x4C40;
+    if (ms < 100) return (uint16_t)0x9C40;
+    if (ms < 300) return (uint16_t)0x19E0;
+    return (uint16_t)0xF800;
 }
 
 // GLCD 5x7 字体: px 任意缩放绘制 (真实 px, 非档位). scale256=px*256/8.
 // 字形 5 列 x 8 行 (第8行存 g/y/p/q 等下伸部分, LSB 为顶行), 字符等宽 6 列.
-// 反向映射 (目标像素 -> 源列/行), 与 CJK 缩放一致, 非整数倍缩放无列空洞/黑线.
+// reverseMap=true: 反向映射 (目标像素 -> 源列/行), 与 CJK 缩放一致, 非整数倍缩放无列空洞/黑线;
+// reverseMap=false: 正向映射 (源列/行 -> 目标像素), 非整数倍缩放的列取整可能留空隙.
 static void drawGlcd(Arduino_GFX* gfx, const char* s, int16_t x, int16_t y, uint16_t color, uint16_t scale256) {
     if (scale256 < 128) scale256 = 128;
     if (scale256 > 1024) scale256 = 1024;
@@ -288,14 +290,25 @@ static void drawGlcd(Arduino_GFX* gfx, const char* s, int16_t x, int16_t y, uint
         if (c > 0x7E) c = '?';
         const uint8_t* cols = &GLCD5x7[(unsigned)(c - 0x20) * 5];
         int16_t nw = sscale(6, scale256);   // 字符格宽
-        int16_t gw = sscale(5, scale256);   // 字形区宽
-        int16_t gh = sscale(8, scale256);   // 字形区高 (含下伸行)
-        for (int16_t dy = 0; dy < gh; dy++) {
-            int16_t sy = (int16_t)((dy * 8) / gh);   // 源行 0..7
-            uint8_t mask = (uint8_t)(1 << sy);
-            for (int16_t dx = 0; dx < gw; dx++) {
-                int16_t sx = (int16_t)((dx * 5) / gw);  // 源列
-                if (pgm_read_byte(&cols[sx]) & mask) gfx->writePixel(cx + dx, y + dy, color);
+        if (configManager.reverseMap) {
+            int16_t gw = sscale(5, scale256);   // 字形区宽
+            int16_t gh = sscale(8, scale256);   // 字形区高 (含下伸行)
+            for (int16_t dy = 0; dy < gh; dy++) {
+                int16_t sy = (int16_t)((dy * 8) / gh);   // 源行 0..7
+                uint8_t mask = (uint8_t)(1 << sy);
+                for (int16_t dx = 0; dx < gw; dx++) {
+                    int16_t sx = (int16_t)((dx * 5) / gw);  // 源列
+                    if (pgm_read_byte(&cols[sx]) & mask) gfx->writePixel(cx + dx, y + dy, color);
+                }
+            }
+        } else {
+            for (int16_t i = 0; i < 5; i++) {
+                uint8_t bits = pgm_read_byte(&cols[i]);
+                for (int16_t sy = 0; sy < 8; sy++) {
+                    if (bits & (1 << sy)) {
+                        gfx->writePixel(cx + sscale(i, scale256), y + sscale(sy, scale256), color);
+                    }
+                }
             }
         }
         cx += nw;

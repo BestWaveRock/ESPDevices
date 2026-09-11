@@ -84,6 +84,7 @@ class ConfigManager {
     int lunarFontSize = 16;                      // 农历字号(px, CJK基础16px)
     int weatherFontSize = 18;                    // 天气字号(px, CJK基础16px)
     int serviceFontSize = 8;                     // 服务监测字号(px, GLCD基础8px)
+    bool reverseMap = true;                      // GLCD 反向映射渲染(目标->源, 消除非整数倍缩放的列空洞/黑线); false=正向
 
     const char* getCity() const { return city.c_str(); }
     const char* getServices() const { return services.c_str(); }

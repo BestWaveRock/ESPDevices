@@ -207,6 +207,7 @@ void setup() {
                 "<label>Lunar font size (px, 16-48)</label><input name='lunarFontSize' type='number' min='16' max='48' value='" + String(configManager.lunarFontSize) + "'>"
                 "<label>Weather font size (px, 16-48)</label><input name='weatherFontSize' type='number' min='16' max='48' value='" + String(configManager.weatherFontSize) + "'>"
                 "<label>Service font size (px, 8-24)</label><input name='serviceFontSize' type='number' min='8' max='24' value='" + String(configManager.serviceFontSize) + "'>"
+                "<label><input name='reverseMap' type='checkbox'" + String(configManager.reverseMap ? " checked" : "") + "> GLCD reverse map (fix black lines on non-integer scaling)</label>"
                 "<button type='submit'>Save &amp; Reboot</button>"
                 "</form></body></html>";
             webserver->raw().send(200, "text/html; charset=UTF-8", html.c_str());
@@ -236,6 +237,7 @@ void setup() {
             if (configManager.weatherFontSize < 16 || configManager.weatherFontSize > 48) configManager.weatherFontSize = 18;
             configManager.serviceFontSize = server.arg("serviceFontSize").toInt();
             if (configManager.serviceFontSize < 8 || configManager.serviceFontSize > 24) configManager.serviceFontSize = 8;
+            configManager.reverseMap = server.hasArg("reverseMap") && server.arg("reverseMap") == "on";
             configManager.save();
             server.send(200, "text/html; charset=UTF-8",
                         "<html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/config'>"

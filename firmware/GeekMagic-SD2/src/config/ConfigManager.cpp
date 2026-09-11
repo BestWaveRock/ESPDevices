@@ -83,6 +83,7 @@ auto ConfigManager::load() -> bool {
     this->lunarFontSize = doc["lunarFontSize"] | lunarFontSize;
     this->weatherFontSize = doc["weatherFontSize"] | weatherFontSize;
     this->serviceFontSize = doc["serviceFontSize"] | serviceFontSize;
+    this->reverseMap = doc["reverseMap"] | reverseMap;
 
     String nvs_ssid = secure.get("wifi_ssid", "");
     String nvs_password = secure.get("wifi_password", "");
@@ -232,6 +233,7 @@ auto ConfigManager::save() -> bool {
     doc["lunarFontSize"] = lunarFontSize;
     doc["weatherFontSize"] = weatherFontSize;
     doc["serviceFontSize"] = serviceFontSize;
+    doc["reverseMap"] = reverseMap;
 
     if (serializeJson(doc, file) == 0) {
         Logger::error("Failed to write config file", "ConfigManager");

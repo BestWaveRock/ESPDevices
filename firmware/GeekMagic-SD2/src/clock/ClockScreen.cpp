@@ -216,8 +216,10 @@ void render(Arduino_GFX* gfx) {
     static char lastCity[32] = "";
     static char lastIp[16] = "";
     static int lastSvcCount = -1;
-    static bool lastSvcUp[4] = {false, false, false, false};
-    static int lastLatMs[4] = {0, 0, 0, 0};
+    static bool lastSvcUp[8] = {false, false, false, false, false, false, false, false};
+    static int lastLatMs[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    static unsigned long svcPageTs = 0;
+    static int svcPage = 0;  // 当前轮播页 (每页2个)
 
     // ---- 本机 IP ----
     char ipBuf[16];
@@ -251,11 +253,6 @@ void render(Arduino_GFX* gfx) {
     // ---- 服务行 ----
     int n = 0;
     const ClockWeather::ServiceStatus* svcs = ClockWeather::services(n);
-    bool svcChanged = (n != lastSvcCount);
-    for (int i = 0; i < n && i < 4; i++) {
-        if (svcs[i].up != lastSvcUp[i] || svcs[i].latency_ms != lastLatMs[i]) { svcChanged = true; break; }
-    }
-    svcChanged = svcChanged || first;
 
     if (first) {
         gfx->fillScreen(LCD_BLACK);
@@ -307,31 +304,58 @@ void render(Arduino_GFX* gfx) {
         drawUtf8(gfx, wlbuf, sx + dw + 8, WEATHER_BASELINE, LCD_WHITE);
     }
 
-    // 服务行 (独立)
-    if (svcChanged) {
-        gfx->fillRect(0, 195, LCD_W, LCD_H - 195, LCD_BLACK);
-        for (int i = 0; i < n && i < 4; i++) {
-            int col = i % 2;
-            int row = i / 2;
-            int16_t x = (col == 0) ? 8 : 124;
-            int16_t y = 206 + row * 22;
-            gfx->fillCircle(x, y - 4, 3, svcs[i].up ? LCD_GREEN : LCD_RED);
-            const char* sip = svcs[i].ip.c_str();
-            drawUtf8(gfx, sip, x + 8, y, 0xB0B0B0);
-            int16_t ipw = utf8Width(sip);
-            if (svcs[i].up) {
-                gfx->setTextSize(2);  // 比IP(size1)大一字号
-                gfx->setTextColor(LCD_GREEN, LCD_BLACK);
-                gfx->setCursor(x + 8 + ipw + 4, y - 6);
-                gfx->printf("%dms", svcs[i].latency_ms);
+    // 服务行 (最多8个, 每页2个, 每10秒轮播切换)
+    {
+        unsigned long now = millis();
+        if (svcPageTs == 0) svcPageTs = now;
+        if (now - svcPageTs >= 10000UL) {
+            svcPageTs = now;
+            if (n > 2) svcPage = (svcPage + 1) % ((n + 1) / 2);
+        }
+        bool svcChanged = first;
+        for (int i = 0; i < n && i < 8; i++) {
+            if (svcs[i].up != lastSvcUp[i] || svcs[i].latency_ms != lastLatMs[i]) { svcChanged = true; break; }
+        }
+        if (svcChanged) {
+            gfx->fillRect(0, 195, LCD_W, LCD_H - 195, LCD_BLACK);
+            if (n == 0) {
+                static const char* t = "未配置监控服务";
+                drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, 210, 0x606060);
             } else {
-                drawUtf8(gfx, "离线", x + 8 + ipw + 4, y, 0xF08080);
+                int pageStart = svcPage * 2;
+                int displayCount = (n - pageStart >= 2) ? 2 : (n - pageStart);
+                for (int j = 0; j < displayCount; j++) {
+                    int i = pageStart + j;
+                    if (i >= n || i >= 8) break;
+                    int16_t x = (j == 0) ? 8 : LCD_W / 2 + 4;
+                    int16_t y = 205;
+                    gfx->fillCircle(x, y - 4, 3, svcs[i].up ? LCD_GREEN : LCD_RED);
+                    const char* sip = svcs[i].ip.c_str();
+                    drawUtf8(gfx, sip, x + 8, y, 0xB0B0B0);
+                    if (svcs[i].up) {
+                        gfx->setTextSize(1);
+                        gfx->setTextColor(LCD_GREEN, LCD_BLACK);
+                        gfx->setCursor(x + 8, y);
+                        gfx->printf(" %dms", svcs[i].latency_ms);
+                    } else {
+                        drawUtf8(gfx, " 离线", x + 8, y, 0xF08080);
+                    }
+                }
+                // 页码点 (超过2个时显示)
+                if (n > 2) {
+                    int totalPages = (n + 1) / 2;
+                    for (int p = 0; p < totalPages; p++) {
+                        int px = LCD_W / 2 - (totalPages * 6) / 2 + p * 6;
+                        gfx->fillCircle(px, 230, 2, (p == svcPage) ? LCD_WHITE : 0x404040);
+                    }
+                }
             }
         }
-        if (n == 0) {
-            static const char* t = "未配置监控服务";
-            drawUtf8(gfx, t, (LCD_W - utf8Width(t)) / 2, 210, 0x606060);
+        for (int i = 0; i < 8; i++) {
+            lastSvcUp[i] = (i < n) ? svcs[i].up : false;
+            lastLatMs[i] = (i < n) ? svcs[i].latency_ms : 0;
         }
+        lastSvcCount = n;
     }
 
     // 更新跟踪状态
@@ -344,11 +368,6 @@ void render(Arduino_GFX* gfx) {
     lastCity[sizeof(lastCity) - 1] = '\0';
     strncpy(lastIp, ipBuf, sizeof(lastIp) - 1);
     lastIp[sizeof(lastIp) - 1] = '\0';
-    lastSvcCount = n;
-    for (int i = 0; i < 4; i++) {
-        lastSvcUp[i] = (i < n) ? svcs[i].up : false;
-        lastLatMs[i] = (i < n) ? svcs[i].latency_ms : 0;
-    }
     first = false;
 
     yield();

@@ -33,6 +33,8 @@ namespace ClockWeather {
         int latency_ms = -1;        // -1 = unknown
     };
 
+    constexpr int MAX_SERVICES = 8;
+
     struct Weather {
         bool ok = false;
         float temp = 0.0f;

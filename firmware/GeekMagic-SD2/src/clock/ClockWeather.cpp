@@ -31,8 +31,7 @@ static constexpr const char* TAG = "ClockWeather";
 
 namespace ClockWeather {
 
-static const int MAX_SERVICES = 4;
-static ServiceStatus s_services[MAX_SERVICES];
+static ServiceStatus s_services[ClockWeather::MAX_SERVICES];
 static int s_serviceCount = 0;
 
 static Weather s_weather;

@@ -128,6 +128,21 @@ out->off = (uint16_t)(pgm_read_byte(b+0) | (pgm_read_byte(b+1) << 8));  // 对
 改为 **增量刷新**：记录上一帧的 时钟/日期/天气/服务 状态，仅当某分区内容变化时才
 重绘该分区（重绘前只清该分区背景色）。首帧铺满整屏，之后只刷变化区 → 无闪屏。
 
+## 天气/服务拉不到：三个叠加 bug
+
+1. **`ClockWeather::update()` 没在 main loop 调用**——只有 `begin()`，天气/服务永不更新。
+   修：`loop()` 里加 `ClockWeather::update();`。
+2. **首拉条件永不满足**：`s_weatherTs=0` 且 `millis()` 从 0 起算，
+   `now - s_weatherTs >= wInt(15min)` 要干等 15 分钟才第一次拉。
+   修：改为「下次允许时间」`s_weatherNext=0`（0=立即），`now >= s_next` 触发后 `s_next = now + 间隔`。
+3. **chunked HTTP 响应带前缀**：open-meteo 走 `Transfer-Encoding: chunked`，
+   ESP8266HTTPClient 的 `getStream()` **不自动去 chunk**，body 前面多了一行 chunk-size：
+   `31 37 66 0D 0A 7B …` = `17f\r\n{`。ArduinoJson 因此返回 `InvalidInput`。
+   修：从 `body.indexOf('{')` 起解析。
+
+> 诊断方法：把 body 前 16 字节做 hex dump 打印（`31 37 66 0D 0A 7B` 一眼看出 chunk 行），
+> 这是定位「JSON 明明合法却解析失败」的关键。
+
 ## 教训
 
 1. ESP8266 上 **`PROGMEM` 不可信**（按变量命名 section，破坏代码/字面量池布局）。
@@ -138,3 +153,6 @@ out->off = (uint16_t)(pgm_read_byte(b+0) | (pgm_read_byte(b+1) << 8));  // 对
 6. 逐字节拼 `uint16_t` 时 **注意小端**：`b[0]` 低字节、`b[1]` 高字节。
 7. 周期性刷新 UI 用 **增量重绘**（只刷变化区），不要每秒 `fillScreen` 整屏。
 8. 开源前 **移除硬编码的个人 WiFi 凭据**（本次已从 `main.cpp` 移除，改为空占位 + 为空时跳过内置连接）。
+9. 周期任务用「下次允许时间」（`next=0` 表立即）而非「上次时间」，避免 `now-0` 首拉延迟。
+10. ESP8266 的 `HTTPClient::getStream()` 对 chunked 响应**不去 chunk**，解析 JSON 前先从 `{` 开始。
+11. 服务探测阻塞式 connect 会卡看门狗（2s），每次探测后 `yield()`。

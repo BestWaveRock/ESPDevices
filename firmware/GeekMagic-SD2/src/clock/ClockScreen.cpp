@@ -26,6 +26,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <pgmspace.h>
+#include <ESP8266WiFi.h>
 
 extern ConfigManager configManager;
 
@@ -151,9 +152,19 @@ void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uin
 }
 
 // 增量刷新: 只在内容变化时重绘对应区域, 避免每秒整屏黑闪
-static const uint16_t SEC_CLOCK_BG = 0x0A1A;
-static const uint16_t SEC_WEATHER_BG = 0x0E22;
-static const uint16_t SEC_SERVICE_BG = 0x0A1A;
+static const uint16_t SEC_CLOCK_BG = LCD_BLACK;
+static const uint16_t SEC_WEATHER_BG = LCD_BLACK;
+static const uint16_t SEC_SERVICE_BG = LCD_BLACK;
+
+// 顶部用内置 GLCD 字体展示本机 IP (ASCII 数字/点号, size1 每字符约 6px)
+static void drawIp(Arduino_GFX* gfx, const char* ip) {
+    if (ip == nullptr || ip[0] == '\0') return;
+    int w = (int)strlen(ip) * 6;
+    gfx->setTextSize(1);
+    gfx->setTextColor(0x608060, LCD_BLACK);
+    gfx->setCursor((LCD_W - w) / 2, 6);
+    gfx->print(ip);
+}
 
 void render(Arduino_GFX* gfx) {
     auto clock = ClockWeather::localClock();
@@ -164,8 +175,16 @@ void render(Arduino_GFX* gfx) {
     static bool lastValid = false;
     static char lastWeather[32] = "";
     static char lastCity[32] = "";
+    static char lastIp[16] = "";
     static int lastSvcCount = -1;
     static bool lastSvcUp[4] = {false, false, false, false};
+
+    char ipBuf[16];
+    String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : String("No Net");
+    strncpy(ipBuf, ipStr.c_str(), sizeof(ipBuf) - 1);
+    ipBuf[sizeof(ipBuf) - 1] = '\0';
+    const char* ip = ipBuf;
+    bool ipChanged = first || strcmp(ip, lastIp) != 0;
 
     bool clockChanged = first || (!clock.valid != !lastValid) || (clock.hour != lastH) || (clock.min != lastM);
     bool dateChanged = clockChanged && (clock.valid && (clock.year != lastY || clock.mon != lastMo || clock.day != lastD));
@@ -198,8 +217,9 @@ void render(Arduino_GFX* gfx) {
         gfx->fillRect(0, 190, LCD_W, 50, SEC_SERVICE_BG);
     }
 
-    if (clockChanged || dateChanged) {
+    if (clockChanged || dateChanged || ipChanged) {
         gfx->fillRect(0, 0, LCD_W, 130, SEC_CLOCK_BG);
+        drawIp(gfx, ip);
         if (clock.valid) {
             char buf[16];
             snprintf(buf, sizeof(buf), "%02d:%02d", clock.hour, clock.min);

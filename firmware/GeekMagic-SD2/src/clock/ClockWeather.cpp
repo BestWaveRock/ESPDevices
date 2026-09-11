@@ -36,8 +36,8 @@ static ServiceStatus s_services[MAX_SERVICES];
 static int s_serviceCount = 0;
 
 static Weather s_weather;
-static unsigned long s_weatherTs = 0;
-static unsigned long s_serviceTs = 0;
+static unsigned long s_weatherNext = 0;   // 下次允许拉取的 earliest 时间 (0=立即)
+static unsigned long s_serviceNext = 0;
 
 static const char* WMO_TEXT[] = {
     "晴", "多云", "阴", "小雨", "中雨", "大雨", "暴雨", "阵雨",
@@ -99,8 +99,7 @@ Clock localClock() {
 }
 
 static bool wifiUp() {
-    extern WiFiManager* wifiManager;
-    return wifiManager != nullptr && WiFiManager::isConnected() && !wifiManager->isApMode();
+    return WiFi.status() == WL_CONNECTED;
 }
 
 static void parseServices() {
@@ -150,11 +149,26 @@ static void fetchWeather() {
         return;
     }
 
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, http.getStream());
+    String body;
+    Stream& stream = http.getStream();
+    while (stream.available()) {
+        int b = stream.read();
+        if (b < 0) break;
+        body += (char)b;
+        if (body.length() > 800) break;
+    }
     http.end();
+
+    // 响应可能带 chunked 传输的 chunk-size 行等前缀, 从第一个 '{' 起解析 JSON
+    int start = body.indexOf('{');
+    if (start < 0) {
+        Logger::warn("weather: no JSON object in body", TAG);
+        return;
+    }
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, body.substring(start));
     if (err) {
-        Logger::warn("weather parse failed", TAG);
+        Logger::warn(("weather parse failed: " + String(err.c_str())).c_str(), TAG);
         return;
     }
 
@@ -162,7 +176,6 @@ static void fetchWeather() {
     s_weather.temp = doc["current"]["temperature_2m"] | 0.0f;
     s_weather.code = doc["current"]["weather_code"] | -1;
     s_weather.desc = codeToText(s_weather.code);
-    s_weatherTs = millis();
     Logger::info(("weather " + s_weather.desc + " " + String(s_weather.temp, 1) + "C").c_str(), TAG);
 }
 
@@ -179,14 +192,16 @@ static void checkServices() {
             s_services[i].up = false;
             c.stop();
         }
-        delay(50);
+        Logger::info(("svc " + s_services[i].ip + ":" + String(s_services[i].port) +
+                      (s_services[i].up ? " UP" : " DOWN")).c_str(), TAG);
+        yield();
     }
 }
 
 void begin() {
     parseServices();
-    s_weatherTs = 0;
-    s_serviceTs = 0;
+    s_weatherNext = 0;   // 首次立即拉取
+    s_serviceNext = 0;
 }
 
 void update() {
@@ -196,12 +211,13 @@ void update() {
     unsigned long wInt = (unsigned long)configManager.weather_min * 60000UL;
     unsigned long sInt = (unsigned long)configManager.service_sec * 1000UL;
 
-    if (now - s_serviceTs >= sInt) {
+    if (now >= s_serviceNext) {
         checkServices();
-        s_serviceTs = now;
+        s_serviceNext = now + sInt;
     }
-    if (now - s_weatherTs >= wInt) {
+    if (now >= s_weatherNext) {
         fetchWeather();
+        s_weatherNext = now + wInt;
     }
 }
 

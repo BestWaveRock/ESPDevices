@@ -227,6 +227,8 @@ void loop() {
         ntpClient->loop();
     }
 
+    ClockWeather::update();
+
     DisplayManager::update();
 
     if (METRICS_ENDPOINT[0] != '\0' && wifiManager != nullptr && WiFiManager::isConnected() &&

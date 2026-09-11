@@ -38,7 +38,6 @@ namespace ClockScreen {
 // param (no struct-return) so the compiler cannot substitute a direct flash load.
 static void glyphAt(const Glyph* arr, uint16_t i, Glyph* out) {
     const uint8_t* b = (const uint8_t*)arr + (unsigned)i * sizeof(Glyph);
-    // off 是 uint16_t, ESP8266 小端: byte0=低字节, byte1=高字节
     out->off = (uint16_t)(pgm_read_byte(b + 0) | (pgm_read_byte(b + 1) << 8));
     out->w = pgm_read_byte(b + 2);
     out->h = pgm_read_byte(b + 3);
@@ -47,7 +46,6 @@ static void glyphAt(const Glyph* arr, uint16_t i, Glyph* out) {
     out->adv = pgm_read_byte(b + 6);
 }
 
-// ---- UTF-8 解码: 返回码点并前进指针 ----
 static uint32_t decodeUtf8(const char*& p) {
     unsigned char c = *p++;
     if (c < 0x80) return c;
@@ -106,7 +104,6 @@ void drawUtf8(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uint
     }
 }
 
-// 显式线性查找, 避免编译器为 switch 生成跳转表 (ESP8266 坑)
 static int clockFind(char c) {
     int n = CLKCount;
     for (int i = 0; i < n; i++) {
@@ -151,58 +148,6 @@ void drawClock(Arduino_GFX* gfx, const char* s, int16_t x, int16_t baseline, uin
     }
 }
 
-// 各分区独立行, 只在自身内容变化时清+重绘对应行, 整屏绝不再整区清 -> 无黑闪
-static const int16_t IP_Y = 6;
-static const int16_t CLOCK_BASELINE = 90;
-static const int16_t DATE_TOP = 98;      // 日期+星期 (GLCD 小字, y 为顶部)
-static const int16_t LUNAR_BASELINE = 126;  // 农历 (CJK 大字, y 为基线)
-static const int16_t WEATHER_BASELINE = 160;
-static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-
-// 服务区: 从172起, 每行一个服务(左右两列), 每行高24px, 最多显示2行(4个), 超过则轮播
-static const int16_t SVC_TOP = 172;
-static const int16_t SVC_ROW_H = 26;
-static const int16_t SVC_COL_W = LCD_W / 2 - 6;
-static const int16_t SVC_PREFIX = 4;   // 地址后空4px再显示延迟
-
-// 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
-static uint16_t svcDelayColor(int ms) {
-    if (ms < 30) return (uint16_t)0x0A00;       // 绿色 (RGB565)
-    if (ms < 100) return (uint16_t)0x6540;      // 黄色 (RGB565)
-    return (uint16_t)0x4C40;                    // 橙色 (RGB565)
-}
-
-// 截断服务地址(超12字符截末尾加..)
-static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
-    char buf[48];
-    snprintf(buf, sizeof(buf), "%s:%d", ip, port);
-    size_t len = strlen(buf);
-    if (len > 12) {
-        strncpy(out, buf, 10);
-        out[10] = '\0';
-        strncat(out, "..", outSz - 11);
-    } else {
-        strncpy(out, buf, outSz - 1);
-        out[outSz - 1] = '\0';
-    }
-}
-
-// 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
-static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
-    gfx->setTextSize(1);
-    gfx->setTextColor(0xB0B0B0, LCD_BLACK);
-    int16_t dw = dateStr ? (int16_t)(strlen(dateStr) * 6) : 0;
-    gfx->setCursor(4, IP_Y);
-    gfx->print(dateStr ? dateStr : "");
-
-    if (ip && ip[0] != '\0') {
-        int16_t iw = (int16_t)(strlen(ip) * 6);
-        gfx->setTextColor(0x608060, LCD_BLACK);
-        gfx->setCursor(LCD_W - 4 - iw, IP_Y);
-        gfx->print(ip);
-    }
-}
-
 // 秒级时钟: 逐数字小格子刷新, 只重绘变化的数字, 无整行黑闪.
 // 时钟各数字 advance 固定 24px, 但字形像素范围不同 (xoff 4..9, w 9..22, h 32..34),
 // 因此旧数字可能比新数字更宽/更高. 若按新数字尺寸清格, 旧数字右侧/底部会残留线条.
@@ -233,6 +178,58 @@ static void drawClockSeconds(Arduino_GFX* gfx, const char* s, const char* prev, 
     }
 }
 
+// 各分区独立行, 只在自身内容变化时清+重绘对应行, 整屏绝不再整区清 -> 无黑闪
+static const int16_t IP_Y = 6;
+static const int16_t CLOCK_BASELINE = 90;
+static const int16_t DATE_TOP = 98;
+static const int16_t LUNAR_BASELINE = 126;
+static const int16_t WEATHER_BASELINE = 160;
+static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+// 服务区: 每行1个服务, 两行/页, 超过则轮播
+static const int16_t SVC_TOP = 172;
+static const int16_t SVC_ROW_H = 26;
+static const int16_t SVC_ADDR_W = 120;
+static const int16_t SVC_GAP = 6;
+
+// 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
+static uint16_t svcDelayColor(int ms) {
+    if (ms < 30) return (uint16_t)0x0A00;
+    if (ms < 100) return (uint16_t)0x6540;
+    return (uint16_t)0x4C40;
+}
+
+// 截断服务地址(超12字符截末尾10字符+..)
+static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s:%d", ip, port);
+    size_t len = strlen(buf);
+    if (len > 12) {
+        strncpy(out, buf, 10);
+        out[10] = '\0';
+        strncat(out, "..", outSz - 11);
+    } else {
+        strncpy(out, buf, outSz - 1);
+        out[outSz - 1] = '\0';
+    }
+}
+
+// 顶部: 左侧 GLCD 小字显示日期+星期, 右侧 GLCD 小字显示 IP
+static void drawTopBar(Arduino_GFX* gfx, const char* dateStr, const char* ip) {
+    gfx->setTextSize(1);
+    gfx->setTextColor(0xB0B0B0, LCD_BLACK);
+    int16_t dw = dateStr ? (int16_t)(strlen(dateStr) * 6) : 0;
+    gfx->setCursor(4, IP_Y);
+    gfx->print(dateStr ? dateStr : "");
+
+    if (ip && ip[0] != '\0') {
+        int16_t iw = (int16_t)(strlen(ip) * 6);
+        gfx->setTextColor(0x608060, LCD_BLACK);
+        gfx->setCursor(LCD_W - 4 - iw, IP_Y);
+        gfx->print(ip);
+    }
+}
+
 void render(Arduino_GFX* gfx) {
     auto clock = ClockWeather::localClock();
 
@@ -247,7 +244,7 @@ void render(Arduino_GFX* gfx) {
     static bool lastSvcUp[8] = {false, false, false, false, false, false, false, false};
     static int lastLatMs[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     static unsigned long svcPageTs = 0;
-    static int svcPage = 0;  // 当前轮播页 (每页2个)
+    static int svcPage = 0;
 
     // ---- 本机 IP ----
     char ipBuf[16];
@@ -297,7 +294,7 @@ void render(Arduino_GFX* gfx) {
         char tbuf[16];
         snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", clock.hour, clock.min, clock.sec);
         if (first || !lastValid) {
-            gfx->fillRect(0, 48, LCD_W, 48, LCD_BLACK);  // 状态切换, 清一次
+            gfx->fillRect(0, 48, LCD_W, 48, LCD_BLACK);
         }
         drawClockSeconds(gfx, tbuf, lastTimeStr, CLOCK_BASELINE, LCD_WHITE);
         strncpy(lastTimeStr, tbuf, sizeof(lastTimeStr) - 1);
@@ -320,10 +317,9 @@ void render(Arduino_GFX* gfx) {
         }
     }
 
-    // 天气行: 区+天气+气温 (city='重庆·两江新区', 截断前缀'重庆·'得'两江新区')
+    // 天气行: 区+天气+气温
     if (weatherChanged) {
         gfx->fillRect(0, 138, LCD_W, 28, LCD_BLACK);
-        // '重庆·两江新区': 重(3B)+庆(3B)+·(2B)=8字节, 之后'两'开始
         const char* district = (strlen(city) > 8) ? (city + 8) : city;
         int16_t dw = utf8Width(district);
         int16_t ww = utf8Width(wlbuf);
@@ -332,7 +328,7 @@ void render(Arduino_GFX* gfx) {
         drawUtf8(gfx, wlbuf, sx + dw + 8, WEATHER_BASELINE, LCD_WHITE);
     }
 
-    // 服务行 (最多8个, 每行1个服务左右两列, 2行/页, 每10秒轮播)
+    // 服务行 (单列定宽: 状态点 + 定宽地址 + 空6px + 延迟ms; 两行/页, 每10秒轮播)
     {
         unsigned long now = millis();
         if (svcPageTs == 0) svcPageTs = now;
@@ -358,25 +354,23 @@ void render(Arduino_GFX* gfx) {
                 for (int r = 0; r < rowsOnPage; r++) {
                     int i = pageStart + r;
                     if (i >= n || i >= 8) break;
-                    int16_t col = r % 2;
-                    int16_t row = r / 2;
-                    int16_t x = col * SVC_COL_W + 4;
-                    int16_t y = SVC_TOP + row * SVC_ROW_H + 16;
-                    char lbl[16];
-                    svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port);
+                    int16_t x = 8;
+                    int16_t y = SVC_TOP + r * SVC_ROW_H + 16;
                     uint16_t dotColor = svcs[i].up ? LCD_GREEN : LCD_RED;
                     gfx->fillCircle(x + 3, y - 5, 3, dotColor);
+                    char lbl[16];
+                    svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port);
                     drawUtf8(gfx, lbl, x + 10, y, 0xD0D0D0);
                     if (svcs[i].up) {
                         gfx->setTextSize(1);
                         gfx->setTextColor(svcDelayColor(svcs[i].latency_ms), LCD_BLACK);
-                        gfx->setCursor(x + 10 + utf8Width(lbl) + SVC_PREFIX, y);
-                        gfx->printf("> %dms", svcs[i].latency_ms);
+                        gfx->setCursor(x + SVC_ADDR_W + SVC_GAP, y);
+                        gfx->printf("%dms", svcs[i].latency_ms);
                     } else {
                         gfx->setTextSize(1);
                         gfx->setTextColor(0xF08080, LCD_BLACK);
-                        gfx->setCursor(x + 10 + utf8Width(lbl) + SVC_PREFIX, y);
-                        gfx->print("> --");
+                        gfx->setCursor(x + SVC_ADDR_W + SVC_GAP, y);
+                        gfx->print("离线");
                     }
                 }
                 // 页码点 (超过2个服务时显示)
@@ -393,7 +387,8 @@ void render(Arduino_GFX* gfx) {
             lastSvcUp[i] = (i < n) ? svcs[i].up : false;
             lastLatMs[i] = (i < n) ? svcs[i].latency_ms : 0;
         }
-        }
+        lastSvcCount = n;
+    }
 
     // 更新跟踪状态
     lastValid = clock.valid;

@@ -189,9 +189,8 @@ static const char* WK_EN[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 // 服务区: 每行1个服务, 两行/页, 超过则轮播
 static const int16_t SVC_TOP = 172;
 static const int16_t SVC_ROW_H = 26;
-static const int16_t SVC_ADDR_W = 120;  // 地址列定宽(px)
-static const int16_t SVC_GAP = 6;       // 地址后空6px再显示延迟
-static const int16_t SVC_ADDR_CHARS = 18;  // 地址列最多字符数(超截)
+static const int16_t SVC_ADDR_W = 120;
+static const int16_t SVC_GAP = 6;
 
 // 延迟ms: <30ms绿, 30-99ms黄, >=100ms橙
 static uint16_t svcDelayColor(int ms) {
@@ -200,15 +199,15 @@ static uint16_t svcDelayColor(int ms) {
     return (uint16_t)0x4C40;
 }
 
-// 截断服务地址(超SVC_ADDR_CHARS字符截)
+// 截断服务地址(超12字符截末尾10字符+..)
 static void svcLabel(char* out, size_t outSz, const char* ip, int port) {
     char buf[48];
     snprintf(buf, sizeof(buf), "%s:%d", ip, port);
     size_t len = strlen(buf);
-    if (len > SVC_ADDR_CHARS) {
-        strncpy(out, buf, SVC_ADDR_CHARS - 2);
-        out[SVC_ADDR_CHARS - 2] = '\0';
-        strncat(out, "..", outSz - (SVC_ADDR_CHARS - 2) - 1);
+    if (len > 12) {
+        strncpy(out, buf, 10);
+        out[10] = '\0';
+        strncat(out, "..", outSz - 11);
     } else {
         strncpy(out, buf, outSz - 1);
         out[outSz - 1] = '\0';
@@ -359,15 +358,12 @@ void render(Arduino_GFX* gfx) {
                     int16_t y = SVC_TOP + r * SVC_ROW_H + 16;
                     uint16_t dotColor = svcs[i].up ? LCD_GREEN : LCD_RED;
                     gfx->fillCircle(x + 3, y - 5, 3, dotColor);
-                    char lbl[24];
+                    char lbl[16];
                     svcLabel(lbl, sizeof(lbl), svcs[i].ip.c_str(), svcs[i].port);
                     gfx->setTextSize(1);
                     gfx->setTextColor(0xD0D0D0, LCD_BLACK);
                     gfx->setCursor(x + 10, y);
                     gfx->print(lbl);
-                    // 定宽填充空格到列尾
-                    size_t lblLen = strlen(lbl);
-                    for (int sp = (int)lblLen; sp < SVC_ADDR_CHARS; sp++) gfx->print(' ');
                     if (svcs[i].up) {
                         gfx->setTextSize(2);
                         gfx->setTextColor(svcDelayColor(svcs[i].latency_ms), LCD_BLACK);

@@ -75,7 +75,7 @@ class ConfigManager {
     std::string city = "重庆·两江新区";
     std::string services = "192.168.3.1:80";   // comma list "ip:port,ip:port"
     int weather_min = 15;                        // 天气刷新(分钟)
-    int service_sec = 30;                        // 服务探测(秒)
+    int service_sec = 10;                        // 服务探测(秒)
     int tz_offset = 8;                           // 时区(小时)
 
     const char* getCity() const { return city.c_str(); }

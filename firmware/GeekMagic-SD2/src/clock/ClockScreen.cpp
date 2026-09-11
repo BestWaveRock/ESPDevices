@@ -217,6 +217,7 @@ void render(Arduino_GFX* gfx) {
     static char lastIp[16] = "";
     static int lastSvcCount = -1;
     static bool lastSvcUp[4] = {false, false, false, false};
+    static int lastLatMs[4] = {0, 0, 0, 0};
 
     // ---- 本机 IP ----
     char ipBuf[16];
@@ -239,7 +240,7 @@ void render(Arduino_GFX* gfx) {
     {
         const ClockWeather::Weather& w = ClockWeather::weather();
         if (w.ok) {
-            snprintf(wlbuf, sizeof(wlbuf), "%s %d℃", ClockWeather::codeToText(w.code), (int)w.temp);
+            snprintf(wlbuf, sizeof(wlbuf), "%s %.1f℃", ClockWeather::codeToText(w.code), w.temp);
         } else {
             snprintf(wlbuf, sizeof(wlbuf), "%s", "天气获取中...");
         }
@@ -252,7 +253,7 @@ void render(Arduino_GFX* gfx) {
     const ClockWeather::ServiceStatus* svcs = ClockWeather::services(n);
     bool svcChanged = (n != lastSvcCount);
     for (int i = 0; i < n && i < 4; i++) {
-        if (svcs[i].up != lastSvcUp[i]) { svcChanged = true; break; }
+        if (svcs[i].up != lastSvcUp[i] || svcs[i].latency_ms != lastLatMs[i]) { svcChanged = true; break; }
     }
     svcChanged = svcChanged || first;
 
@@ -294,13 +295,11 @@ void render(Arduino_GFX* gfx) {
         }
     }
 
-    // 天气行: 区+天气+气温 (去城市全名, 截断'·'后的区名)
+    // 天气行: 区+天气+气温 (city='重庆·两江新区', 截断前缀'重庆·'得'两江新区')
     if (weatherChanged) {
         gfx->fillRect(0, 138, LCD_W, 28, LCD_BLACK);
-        const char* district = city;
-        const char* dot = strchr(city, '\xC2\xB7');  // '·' U+00B7 UTF-8: C2B7
-        if (dot) district = dot + 2;  // skip 2-byte '·'
-        if (district[0] == '\0') district = city;
+        // '重庆·两江新区': 重(3B)+庆(3B)+·(2B)=8字节, 之后'两'开始
+        const char* district = (strlen(city) > 8) ? (city + 8) : city;
         int16_t dw = utf8Width(district);
         int16_t ww = utf8Width(wlbuf);
         int16_t sx = (LCD_W - (dw + 8 + ww)) / 2;
@@ -321,9 +320,11 @@ void render(Arduino_GFX* gfx) {
             drawUtf8(gfx, sip, x + 8, y, 0xB0B0B0);
             int16_t ipw = utf8Width(sip);
             if (svcs[i].up) {
-                char lbuf[12];
-                snprintf(lbuf, sizeof(lbuf), "%dms", svcs[i].latency_ms);
-                drawUtf8(gfx, lbuf, x + 8 + ipw + 4, y, 0x90D090);
+                char nbuf[12];
+                snprintf(nbuf, sizeof(nbuf), "%d", svcs[i].latency_ms);
+                int16_t nbw = utf8Width(nbuf);
+                drawUtf8(gfx, nbuf, x + 8 + ipw + 4, y, LCD_GREEN);
+                drawUtf8(gfx, "ms", x + 8 + ipw + 4 + nbw, y, LCD_GREEN);
             } else {
                 drawUtf8(gfx, "离线", x + 8 + ipw + 4, y, 0xF08080);
             }
@@ -345,7 +346,10 @@ void render(Arduino_GFX* gfx) {
     strncpy(lastIp, ipBuf, sizeof(lastIp) - 1);
     lastIp[sizeof(lastIp) - 1] = '\0';
     lastSvcCount = n;
-    for (int i = 0; i < 4; i++) lastSvcUp[i] = (i < n) ? svcs[i].up : false;
+    for (int i = 0; i < 4; i++) {
+        lastSvcUp[i] = (i < n) ? svcs[i].up : false;
+        lastLatMs[i] = (i < n) ? svcs[i].latency_ms : 0;
+    }
     first = false;
 
     yield();

@@ -206,26 +206,20 @@ void setup() {
             webserver->raw().send(200, "text/html; charset=UTF-8", html.c_str());
         });
         webserver->raw().on("/config", HTTP_POST, []() {
-            String body = webserver->raw().arg("plain");
-            if (body.length() == 0) {
-                webserver->raw().send(400, "text/plain", "Empty body");
+            auto& server = webserver->raw();
+            if (!server.hasArg("city")) {
+                server.send(400, "text/plain", "Missing city");
                 return;
             }
-            JsonDocument doc;
-            DeserializationError err = deserializeJson(doc, body);
-            if (err) {
-                webserver->raw().send(400, "text/plain", "Invalid JSON");
-                return;
-            }
-            if (doc["lat"].is<float>()) configManager.lat = doc["lat"].as<float>();
-            if (doc["lng"].is<float>()) configManager.lng = doc["lng"].as<float>();
-            if (doc["city"].is<const char*>()) configManager.city = doc["city"].as<const char*>();
-            if (doc["services"].is<const char*>()) configManager.services = doc["services"].as<const char*>();
-            if (doc["weather_min"].is<int>()) configManager.weather_min = doc["weather_min"].as<int>();
-            if (doc["service_sec"].is<int>()) configManager.service_sec = doc["service_sec"].as<int>();
-            if (doc["tz_offset"].is<int>()) configManager.tz_offset = doc["tz_offset"].as<int>();
+            configManager.lat = server.arg("lat").toFloat();
+            configManager.lng = server.arg("lng").toFloat();
+            configManager.city = server.arg("city").c_str();
+            configManager.services = server.arg("services").c_str();
+            configManager.weather_min = server.arg("weather_min").toInt();
+            configManager.service_sec = server.arg("service_sec").toInt();
+            configManager.tz_offset = server.arg("tz_offset").toInt();
             configManager.save();
-            webserver->raw().send(200, "text/plain", "Saved, rebooting...");
+            server.send(200, "text/plain", "Saved, rebooting...");
             delay(500);
             ESP.restart();
         });

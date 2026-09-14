@@ -12,6 +12,10 @@
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-yellow.svg?style=for-the-badge)](firmware/GeekMagic-SD2/LICENSE)
 
+## 📷 实物展示
+
+![SD2 小电视实物展示](hardware/SD2实物展示.jpg)
+
 ## ⚠️ 刷机风险声明
 
 刷机可能变砖。虽然 ESP8266 可救砖（串口擦除/重刷），但作者不为此负责。**请自行备份原厂固件**

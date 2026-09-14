@@ -36,7 +36,14 @@ static int s_serviceCount = 0;
 
 static Weather s_weather;
 static unsigned long s_weatherNext = 0;   // 下次允许拉取的 earliest 时间 (0=立即)
-static unsigned long s_serviceNext = 0;
+static unsigned long s_serviceNext = 0;   // 下次开始一轮服务探测的时间
+static int s_serviceIdx = -1;             // 正在探测的服务下标, -1=当前无进行中的探测轮
+
+// ESP8266 WiFiClient::connect 在宿主机 DOWN 时会阻塞整个下载 timeout
+// (ClientContext::connect 内 esp_delay), 主循环(含每秒时钟渲染)会一直被卡住,
+// 且多个 DOWN 服务连加可能触发 2s 看门狗. 因此每个探测单独设一个较短的上限,
+// 且一次 update() 至多探测一个服务, 把阻塞分摊到多次主循环迭代里.
+static constexpr int SERVICE_PROBE_TIMEOUT_MS = 500;
 
 static const char* WMO_TEXT[] = {
     "晴", "多云", "阴", "小雨", "中雨", "大雨", "暴雨", "阵雨",
@@ -178,34 +185,35 @@ static void fetchWeather() {
     Logger::info(("weather " + s_weather.desc + " " + String(s_weather.temp, 1) + "C").c_str(), TAG);
 }
 
-static void checkServices() {
-    for (int i = 0; i < s_serviceCount; i++) {
-        WiFiClient c;
-        c.setTimeout(2000);
-        unsigned long t0 = millis();
-        int r = c.connect(s_services[i].ip.c_str(), s_services[i].port);
-        unsigned long elapsed = millis() - t0;
-        if (r == 1) {
-            s_services[i].up = true;
-            s_services[i].last_ms = t0;
-            s_services[i].latency_ms = (int)elapsed;
-            c.stop();
-        } else {
-            s_services[i].up = false;
-            s_services[i].last_ms = 0;
-            s_services[i].latency_ms = -1;
-            c.stop();
-        }
-        Logger::info(("svc " + s_services[i].ip + ":" + String(s_services[i].port) +
-                      (s_services[i].up ? (" UP " + String(elapsed) + "ms") : " DOWN")).c_str(), TAG);
-        yield();
+// 探测 s_services[s_serviceIdx] 一个服务并推进到下一个, 返回该轮是否全部完成
+static bool probeOneService() {
+    WiFiClient c;
+    c.setTimeout(SERVICE_PROBE_TIMEOUT_MS);
+    unsigned long t0 = millis();
+    int r = c.connect(s_services[s_serviceIdx].ip.c_str(), s_services[s_serviceIdx].port);
+    unsigned long elapsed = millis() - t0;
+    if (r == 1) {
+        s_services[s_serviceIdx].up = true;
+        s_services[s_serviceIdx].last_ms = (unsigned long)t0;
+        s_services[s_serviceIdx].latency_ms = (int)elapsed;
+    } else {
+        s_services[s_serviceIdx].up = false;
+        s_services[s_serviceIdx].last_ms = 0;
+        s_services[s_serviceIdx].latency_ms = -1;
     }
+    c.stop();
+    Logger::info(("svc " + s_services[s_serviceIdx].ip + ":" + String(s_services[s_serviceIdx].port) +
+                  (s_services[s_serviceIdx].up ? (" UP " + String(elapsed) + "ms") : " DOWN")).c_str(), TAG);
+    s_serviceIdx++;
+    yield();
+    return s_serviceIdx >= s_serviceCount;
 }
 
 void begin() {
     parseServices();
     s_weatherNext = 0;   // 首次立即拉取
     s_serviceNext = 0;
+    s_serviceIdx = -1;
 }
 
 void update() {
@@ -215,13 +223,22 @@ void update() {
     unsigned long wInt = (unsigned long)configManager.weather_min * 60000UL;
     unsigned long sInt = (unsigned long)configManager.service_sec * 1000UL;
 
-    if (now >= s_serviceNext) {
-        checkServices();
-        s_serviceNext = now + sInt;
+    // 服务探测: 每轮按 service_sec 调度, 但一次 update() 至多探测一个服务.
+    // 逐服务分摊阻塞时间, 避免 DOWN 服务把主循环(时钟渲染)卡死或触发看门狗.
+    if (s_serviceCount > 0) {
+        if (s_serviceIdx < 0 && now >= s_serviceNext) {
+            s_serviceIdx = 0;   // 开始新一轮
+        }
+        if (s_serviceIdx >= 0 && probeOneService()) {
+            s_serviceIdx = -1;
+            s_serviceNext = millis() + sInt;
+        }
+    } else {
+        s_serviceIdx = -1;
     }
     if (now >= s_weatherNext) {
         fetchWeather();
-        s_weatherNext = now + wInt;
+        s_weatherNext = millis() + wInt;
     }
 }
 

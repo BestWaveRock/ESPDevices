@@ -74,7 +74,7 @@ class ConfigManager {
     float lng = 106.55f;
     std::string city = "两江新区";
     std::string services =
-        "192.168.3.1:80,8.8.8.8,baidu.com,google.com,nav.200034.xyz,admin.200034.xyz,192.168.6.188";  // comma list
+        "192.168.3.1:80,8.8.8.8,baidu.com,google.com,192.168.6.188";  // comma list
     int weather_min = 15;                        // 天气刷新(分钟)
     int service_sec = 10;                        // 服务探测(秒)
     int tz_offset = 8;                           // 时区(小时)

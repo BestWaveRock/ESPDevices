@@ -4,6 +4,7 @@
 set -euo pipefail
 
 FW_DIR="$(cd "$(dirname "$0")/../firmware/GeekMagic-SD2" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PIO="pio"
 
 # 若系统未装 PlatformIO，尝试用虚拟环境
@@ -24,7 +25,8 @@ echo "==> 编译固件 (esp12e) ..."
 echo "==> 打包 LittleFS 文件系统 ..."
 "$PIO" run -e esp12e -t buildfs
 
-OUT="$(cd .. && pwd)/build"
+OUT="$ROOT/build"
+mkdir -p "$OUT"
 cp -f .pio/build/esp12e/firmware.bin  "$OUT/firmware.bin"
 cp -f .pio/build/esp12e/littlefs.bin  "$OUT/littlefs.bin"
 echo ""

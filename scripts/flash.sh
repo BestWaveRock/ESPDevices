@@ -18,12 +18,10 @@ done
 # 找 esptool
 ESPTOOL="esptool.py"
 if ! command -v "$ESPTOOL" >/dev/null 2>&1; then
-  # PlatformIO 自带 esptool
-  PIO="$(command -v pio 2>/dev/null || true)"
-  if [ -n "$PIO" ]; then
-    PKG="$(dirname "$PIO")/../packages/tools-esptool" 2>/dev/null || true
-  fi
-  for cand in "$HOME/.platformio/packages/tools-esptool/esptool.py" \
+  # PlatformIO 自带 esptool（新包名 tool-esptoolpy，旧包名 tools-esptool）
+  for cand in "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" \
+              "$HOME/.platformio/packages/tool-esptoolpy"*/esptool.py \
+              "$HOME/.platformio/packages/tools-esptool/esptool.py" \
               "$HOME/.platformio/packages/tools-esptool"*/esptool.py; do
     if [ -f "$cand" ]; then ESPTOOL="$cand"; break; fi
   done
@@ -41,12 +39,19 @@ if [ -z "$PORT" ]; then
 fi
 echo "使用串口: $PORT"
 
+# PlatformIO 的 esptool.py 不可直接执行，需用 python3 调用
+if [[ "$ESPTOOL" == *.py ]]; then
+  PYSP="python3"
+else
+  PYSP=""
+fi
+
 echo "==> 烧录 firmware.bin 到 0x0 ..."
-"$ESPTOOL" --chip esp8266 --port "$PORT" --baud 115200 \
+$PYSP "$ESPTOOL" --chip esp8266 --port "$PORT" --baud 115200 \
   write_flash 0x0 "$FIRMWARE"
 
 echo "==> 烧录 littlefs.bin 到 0x200000 ..."
-"$ESPTOOL" --chip esp8266 --port "$PORT" --baud 115200 \
+$PYSP "$ESPTOOL" --chip esp8266 --port "$PORT" --baud 115200 \
   write_flash 0x200000 "$LITTLEFS"
 
 echo ""

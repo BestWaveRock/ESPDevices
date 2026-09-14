@@ -183,48 +183,9 @@ void setup() {
 
     registerApiEndpoints(webserver);
 
-    // /config 页面: 读 config.json 展示配置表单, POST 写回 LittleFS 并重启
+    // /config 页面: 静态页(config.html, 与 Web 面板同风格) GET, POST 写回 LittleFS 并重启
     if (littleFsReadyForStatic && webserver != nullptr) {
-        webserver->raw().on("/config", HTTP_GET, []() {
-            String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Config</title>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<style>body{font-family:sans-serif;max-width:600px;margin:2rem auto;padding:0 1rem}"
-                "label{display:block;margin:0.7rem 0 0.2rem}input,select{width:100%;padding:0.4rem}"
-                "button{background:#2563eb;color:#fff;border:none;padding:0.6rem 1.2rem;border-radius:4px;margin-top:1rem}"
-                "h1{color:#2563eb}</style></head><body>"
-                "<h1>Clock / Weather / Service Config</h1>"
-                "<form method='POST' action='/config'>"
-                "<label>Latitude (lat)</label><input name='lat' type='number' step='0.0001' value='" + String(configManager.lat) + "'>"
-                "<label>Longitude (lng)</label><input name='lng' type='number' step='0.0001' value='" + String(configManager.lng) + "'>"
-                "<label>City</label><input name='city' type='text' value='" + String(configManager.getCity()) + "'>"
-                "<label>Services (comma, ip:port)</label><input name='services' type='text' value='" + String(configManager.getServices()) + "'>"
-                "<label>Weather interval (minutes)</label><input name='weather_min' type='number' value='" + String(configManager.weather_min) + "'>"
-                "<label>Service check interval (seconds)</label><input name='service_sec' type='number' value='" + String(configManager.service_sec) + "'>"
-                "<label>Timezone offset (hours)</label><input name='tz_offset' type='number' value='" + String(configManager.tz_offset) + "'>"
-                "<label>IP font size (px, 8-24)</label><input name='ipFontSize' type='number' min='8' max='24' value='" + String(configManager.ipFontSize) + "'>"
-                "<label>Date font size (px, 8-24)</label><input name='dateFontSize' type='number' min='8' max='24' value='" + String(configManager.dateFontSize) + "'>"
-                "<label>Clock font size (px, 17-68)</label><input name='clockFontSize' type='number' min='17' max='68' value='" + String(configManager.clockFontSize) + "'>"
-                "<label>Lunar font size (px, 16-48)</label><input name='lunarFontSize' type='number' min='16' max='48' value='" + String(configManager.lunarFontSize) + "'>"
-                "<label>Weather font size (px, 16-48)</label><input name='weatherFontSize' type='number' min='16' max='48' value='" + String(configManager.weatherFontSize) + "'>"
-                "<label>Service font size (px, 8-24)</label><input name='serviceFontSize' type='number' min='8' max='24' value='" + String(configManager.serviceFontSize) + "'>"
-                "<label><input name='reverseMap' type='checkbox'" + String(configManager.reverseMap ? " checked" : "") + "> GLCD reverse map (fix black lines on non-integer scaling)</label>"
-                "<label>Theme color</label><select name='theme'>"
-                "<option value='0'" + String(configManager.theme == 0 ? " selected" : "") + ">0 Green</option>"
-                "<option value='1'" + String(configManager.theme == 1 ? " selected" : "") + ">1 Blue</option>"
-                "<option value='2'" + String(configManager.theme == 2 ? " selected" : "") + ">2 Purple</option>"
-                "<option value='3'" + String(configManager.theme == 3 ? " selected" : "") + ">3 Cyan</option>"
-                "<option value='4'" + String(configManager.theme == 4 ? " selected" : "") + ">4 Amber</option>"
-                "<option value='5'" + String(configManager.theme == 5 ? " selected" : "") + ">5 Red</option>"
-                "<option value='6'" + String(configManager.theme == 6 ? " selected" : "") + ">6 Pink</option>"
-                "<option value='7'" + String(configManager.theme == 7 ? " selected" : "") + ">7 Orange</option>"
-                "<option value='8'" + String(configManager.theme == 8 ? " selected" : "") + ">8 White</option>"
-                "<option value='9'" + String(configManager.theme == 9 ? " selected" : "") + ">9 Yellow</option>"
-                "</select>"
-                "<label>Backlight brightness (1-10)</label><input name='brightness' type='number' min='1' max='10' value='" + String(configManager.brightness) + "'>"
-                "<button type='submit'>Save &amp; Reboot</button>"
-                "</form></body></html>";
-            webserver->raw().send(200, "text/html; charset=UTF-8", html.c_str());
-        });
+        webserver->serveStaticC("/config", "/web/config.html", "text/html");
         webserver->raw().on("/config", HTTP_POST, []() {
             auto& server = webserver->raw();
             if (!server.hasArg("city")) {

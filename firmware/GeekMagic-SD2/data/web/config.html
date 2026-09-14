@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interface Config</title>
+    <link rel="stylesheet" href="./css/pico.min.css" />
+    <link rel="stylesheet" href="./css/style.css" />
+    <script src="./js/alpinejs.min.js" defer></script>
+    <script src="./js/utils.js"></script>
+    <script src="./js/themeSwitcher.js"></script>
+    <script src="./js/main.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        fetch("./config.json")
+          .then((r) => r.json())
+          .then((cfg) => {
+            const set = (name, value) => {
+              const el = document.getElementById("cfg-" + name);
+              if (el) el.value = value;
+            };
+            set("lat", cfg.lat);
+            set("lng", cfg.lng);
+            set("city", cfg.city);
+            set("services", cfg.services);
+            set("weather_min", cfg.weather_min);
+            set("service_sec", cfg.service_sec);
+            set("tz_offset", cfg.tz_offset);
+            set("ipFontSize", cfg.ipFontSize);
+            set("dateFontSize", cfg.dateFontSize);
+            set("clockFontSize", cfg.clockFontSize);
+            set("lunarFontSize", cfg.lunarFontSize);
+            set("weatherFontSize", cfg.weatherFontSize);
+            set("serviceFontSize", cfg.serviceFontSize);
+            set("theme", cfg.theme);
+            set("brightness", cfg.brightness);
+            const reverseMap = document.getElementById("cfg-reverseMap");
+            if (reverseMap) reverseMap.checked = !!cfg.reverseMap;
+          })
+          .catch(() => {
+            // Config not available yet; leave form empty and let defaults apply.
+          });
+      });
+    </script>
+  </head>
+  <body>
+    <main class="container">
+      <header id="header-placeholder"></header>
+
+      <a href="./index.html" class="wifi-back-link">← Back to Home</a>
+
+      <section>
+        <h2>Interface Config</h2>
+        <p>Clock / weather / service monitor settings. Saved values are applied after reboot.</p>
+
+        <form method="POST" action="/config">
+          <fieldset>
+            <legend>Weather Location</legend>
+            <label for="cfg-lat">Latitude</label>
+            <input
+              id="cfg-lat"
+              name="lat"
+              type="number"
+              step="0.0001"
+              placeholder="29.65"
+            />
+            <label for="cfg-lng">Longitude</label>
+            <input
+              id="cfg-lng"
+              name="lng"
+              type="number"
+              step="0.0001"
+              placeholder="106.55"
+            />
+            <label for="cfg-city">City</label>
+            <input id="cfg-city" name="city" type="text" placeholder="City" />
+          </fieldset>
+
+          <fieldset>
+            <legend>Service Monitor</legend>
+            <label for="cfg-services">Services (comma, ip:port)</label>
+            <input
+              id="cfg-services"
+              name="services"
+              type="text"
+              placeholder="192.168.3.1:80,8.8.8.8"
+            />
+            <label for="cfg-service_sec">Service check interval (seconds)</label>
+            <input
+              id="cfg-service_sec"
+              name="service_sec"
+              type="number"
+              min="1"
+              placeholder="10"
+            />
+          </fieldset>
+
+          <fieldset>
+            <legend>Clock / Weather Behavior</legend>
+            <label for="cfg-weather_min">Weather refresh interval (minutes)</label>
+            <input
+              id="cfg-weather_min"
+              name="weather_min"
+              type="number"
+              min="1"
+              placeholder="15"
+            />
+            <label for="cfg-tz_offset">Timezone offset (hours)</label>
+            <input
+              id="cfg-tz_offset"
+              name="tz_offset"
+              type="number"
+              placeholder="8"
+            />
+            <label for="cfg-theme">Theme color</label>
+            <select id="cfg-theme" name="theme">
+              <option value="0">0 Green</option>
+              <option value="1">1 Blue</option>
+              <option value="2">2 Purple</option>
+              <option value="3">3 Cyan</option>
+              <option value="4">4 Amber</option>
+              <option value="5">5 Red</option>
+              <option value="6">6 Pink</option>
+              <option value="7">7 Orange</option>
+              <option value="8">8 White</option>
+              <option value="9">9 Yellow</option>
+            </select>
+            <label for="cfg-brightness">Backlight brightness (1-10)</label>
+            <input
+              id="cfg-brightness"
+              name="brightness"
+              type="number"
+              min="1"
+              max="10"
+              placeholder="10"
+            />
+          </fieldset>
+
+          <fieldset>
+            <legend>Font Sizes (px, reboot)</legend>
+            <label for="cfg-ipFontSize">IP font size (8-24)</label>
+            <input id="cfg-ipFontSize" name="ipFontSize" type="number" min="8" max="24" />
+            <label for="cfg-dateFontSize">Date font size (8-24)</label>
+            <input id="cfg-dateFontSize" name="dateFontSize" type="number" min="8" max="24" />
+            <label for="cfg-clockFontSize">Clock font size (17-68)</label>
+            <input id="cfg-clockFontSize" name="clockFontSize" type="number" min="17" max="68" />
+            <label for="cfg-lunarFontSize">Lunar font size (16-48)</label>
+            <input id="cfg-lunarFontSize" name="lunarFontSize" type="number" min="16" max="48" />
+            <label for="cfg-weatherFontSize">Weather font size (16-48)</label>
+            <input id="cfg-weatherFontSize" name="weatherFontSize" type="number" min="16" max="48" />
+            <label for="cfg-serviceFontSize">Service font size (8-24)</label>
+            <input id="cfg-serviceFontSize" name="serviceFontSize" type="number" min="8" max="24" />
+          </fieldset>
+
+          <fieldset>
+            <legend>Rendering</legend>
+            <label for="cfg-reverseMap">
+              <input
+                id="cfg-reverseMap"
+                name="reverseMap"
+                type="checkbox"
+                value="on"
+              />
+              GLCD reverse map (fix black lines on non-integer scaling)
+            </label>
+          </fieldset>
+
+          <button type="submit" class="primary">Save &amp; Reboot</button>
+        </form>
+      </section>
+
+      <footer id="footer-placeholder"></footer>
+    </main>
+  </body>
+</html>
